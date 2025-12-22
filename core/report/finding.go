@@ -1,10 +1,10 @@
 package report
 
 type Finding struct {
-	RuleID    string
-	Title     string
-	Severity  string
-	Workload  string
-	Container string
-	Field     string
+	RuleID    string `json:"rule_id"`
+	Title     string `json:"title"`
+	Severity  string `json:"severity"`
+	Workload  string `json:"workload"`
+	Container string `json:"container"`
+	Field     string `json:"field"`
 }
