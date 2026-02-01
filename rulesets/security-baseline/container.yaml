@@ -1,0 +1,13 @@
+- id: ISG-SEC-001
+  title: Container running as root
+  severity: HIGH
+  condition:
+    field: container.user
+    equals: 0
+
+- id: ISG-SEC-002
+  title: Privileged container
+  severity: CRITICAL
+  condition:
+    field: container.privileged
+    equals: true
