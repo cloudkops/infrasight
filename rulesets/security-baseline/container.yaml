@@ -1,10 +1,13 @@
 - id: ISG-SEC-001
   title: Container running as root
   severity: HIGH
+  category: security
+  description: Containers should not run as root user.
+  remediation: Set runAsUser to a non-root UID in the pod securityContext.
+  docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   condition:
     field: container.user
     equals: 0
-
 - id: ISG-SEC-002
   title: Privileged container
   severity: CRITICAL

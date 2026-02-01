@@ -10,4 +10,11 @@ func PrintTable(findings []Finding) {
 		fmt.Printf("%-15s %-10s %-12s %-15s %-20s\n",
 			f.RuleID, f.Severity, f.Workload, f.Container, f.Field)
 	}
+
+	fmt.Println("--- Remediation ---")
+
+	for _, f := range findings {
+		fmt.Println("→ ", f.Remediation)
+		fmt.Println("→ Docs: ", f.DocsUrl)
+	}
 }

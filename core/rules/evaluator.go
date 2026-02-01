@@ -15,24 +15,32 @@ func Evaluate(workload []model.Workload, rules []Rule) []report.Finding {
 					expected := int64(r.Condition.Equals.(int))
 					if c.User == expected {
 						findings = append(findings, report.Finding{
-							RuleID:    r.ID,
-							Title:     r.Title,
-							Severity:  r.Severity,
-							Workload:  w.Name,
-							Container: c.Name,
-							Field:     r.Condition.Field,
+							RuleID:      r.ID,
+							Title:       r.Title,
+							Severity:    r.Severity,
+							Workload:    w.Name,
+							Container:   c.Name,
+							Field:       r.Condition.Field,
+							Description: r.Description,
+							Category:    r.Category,
+							DocsUrl:     r.DocsUrl,
+							Remediation: r.Remediation,
 						})
 					}
 				case "container.privileged":
 					expected := r.Condition.Equals.(bool)
 					if c.Privileged == expected {
 						findings = append(findings, report.Finding{
-							RuleID:    r.ID,
-							Title:     r.Title,
-							Severity:  r.Severity,
-							Workload:  w.Name,
-							Container: c.Name,
-							Field:     r.Condition.Field,
+							RuleID:      r.ID,
+							Title:       r.Title,
+							Severity:    r.Severity,
+							Workload:    w.Name,
+							Container:   c.Name,
+							Field:       r.Condition.Field,
+							Description: r.Description,
+							Category:    r.Category,
+							DocsUrl:     r.DocsUrl,
+							Remediation: r.Remediation,
 						})
 					}
 				}
