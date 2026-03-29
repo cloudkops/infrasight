@@ -1,35 +1,34 @@
 package report
 
+import "strings"
+
+var severityRank = map[string]int{
+	"LOW":      0,
+	"MEDIUM":   1,
+	"HIGH":     2,
+	"CRITICAL": 3,
+}
+
+func normalizeSeverity(s string) string {
+	return strings.ToUpper(s)
+}
+
+func isSeverityAtLeast(sev, threshold string) bool {
+	return severityRank[normalizeSeverity(sev)] >= severityRank[normalizeSeverity(threshold)]
+}
+
 func ExitCode(findings []Finding, failOn string) int {
 	exitCode := 0
+
 	for _, f := range findings {
-		if !severityAllowed(f.Severity, failOn) {
+		if !isSeverityAtLeast(f.Severity, failOn) {
 			continue
 		}
-		switch f.Severity {
-		case "CRITICAL":
-			if exitCode < 3 {
-				exitCode = 3
-			}
-		case "HIGH":
-			if exitCode < 2 {
-				exitCode = 2
-			}
-		case "MEDIUM":
-			if exitCode < 1 {
-				exitCode = 1
-			}
+
+		code := severityRank[normalizeSeverity(f.Severity)]
+		if code > exitCode {
+			exitCode = code
 		}
 	}
 	return exitCode
-}
-
-func severityAllowed(sev, failOn string) bool {
-	order := map[string]int{
-		"CRITICAL": 3,
-		"HIGH":     2,
-		"MEDIUM":   1,
-		"LOW":      0,
-	}
-	return order[sev] >= order[failOn]
 }

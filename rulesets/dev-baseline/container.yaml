@@ -1,0 +1,66 @@
+- id: ISG-DEV-001
+  title: Container running as root (development warning)
+  severity: MEDIUM
+  category: security
+  description: Development environments should still avoid root containers. Root usage in dev masks real security issues before they reach production and normalises bad habits.
+  remediation: Use a non-root image user and set runAsUser in the workload securityContext, even in development.
+  docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  condition:
+    field: container.user
+    equals: 0
+
+- id: ISG-DEV-002
+  title: Privileged container in development
+  severity: HIGH
+  category: security
+  description: Privileged mode in development can mask production security issues and accustoms teams to unsafe defaults. Should be avoided even in non-production environments.
+  remediation: Replace privileged mode with explicit capabilities and device mounts. Test without privilege before shipping.
+  docs_url: https://kubernetes.io/docs/concepts/security/linux-kernel-security-constraints/
+  condition:
+    field: container.privileged
+    equals: true
+
+- id: ISG-DEV-003
+  title: Container missing CPU limit in development
+  severity: LOW
+  category: reliability
+  description: Missing CPU limits in development means resource behaviour is never tested before production. Workloads that work fine in dev without limits can cause incidents when limits are enforced later.
+  remediation: Add resources.limits.cpu to match expected production limits and exercise realistic throttling in development.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.cpu_limit
+    exists: false
+
+- id: ISG-DEV-004
+  title: Container missing memory limit in development
+  severity: LOW
+  category: reliability
+  description: Memory limits should be tested in development to uncover memory leaks and to ensure the container performs correctly under memory pressure.
+  remediation: Add resources.limits.memory that mirrors your target production value. Use memory profiling tools to tune it.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.memory_limit
+    exists: false
+
+- id: ISG-DEV-005
+  title: Host network in development
+  severity: MEDIUM
+  category: security
+  description: Using hostNetwork in development bypasses DNS and service discovery testing and creates false confidence about how the workload will behave in production networking.
+  remediation: Disable hostNetwork and use standard service names and cluster DNS so that network behaviour matches production.
+  docs_url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+  condition:
+    field: container.exposure.hostNetwork
+    equals: true
+
+- id: ISG-DEV-006
+  title: Workload missing app label in development
+  severity: LOW
+  category: governance
+  description: Without the app label, development workloads cannot be identified in dashboards, log aggregators, or by network policies, making debugging harder.
+  remediation: Add metadata.labels.app to all workloads, even in development, to build consistent labelling habits.
+  docs_url: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  condition:
+    field: workload.labels.app
+    equals: ""
+

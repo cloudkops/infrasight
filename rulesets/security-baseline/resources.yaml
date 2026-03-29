@@ -1,0 +1,44 @@
+- id: ISG-RES-001
+  title: Container missing CPU limit
+  severity: MEDIUM
+  category: reliability
+  description: Containers without CPU limits can starve neighboring workloads and cause node-level CPU contention. This is a leading cause of noisy-neighbour incidents in shared clusters.
+  remediation: Set resources.limits.cpu in the container spec to a value appropriate for the workload. Start with profiling at 150% of observed peak usage.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.cpu_limit
+    exists: false
+
+- id: ISG-RES-002
+  title: Container missing memory limit
+  severity: MEDIUM
+  category: reliability
+  description: Containers without memory limits can cause OOMKill events on the node and affect all co-located workloads. A missing memory limit is also a common source of runaway processes.
+  remediation: Set resources.limits.memory in the container spec. Start with 1.5x the observed peak memory usage.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.memory_limit
+    exists: false
+
+- id: ISG-RES-003
+  title: Container missing CPU request
+  severity: LOW
+  category: reliability
+  description: Without a CPU request the Kubernetes scheduler cannot make informed placement decisions, leading to potential overcommit and unpredictable performance.
+  remediation: Set resources.requests.cpu based on the container baseline CPU consumption.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.cpu_request
+    exists: false
+
+- id: ISG-RES-004
+  title: Container missing memory request
+  severity: LOW
+  category: reliability
+  description: Without a memory request the scheduler cannot guarantee memory availability for the container, increasing eviction risk under pressure.
+  remediation: Set resources.requests.memory based on the container baseline memory footprint.
+  docs_url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  condition:
+    field: container.resources.memory_request
+    exists: false
+

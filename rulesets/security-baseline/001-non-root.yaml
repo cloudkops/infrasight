@@ -2,8 +2,8 @@
   title: Container running as root
   severity: HIGH
   category: security
-  description: Containers running as root increase blast radius.
-  remediation: Set runAsUser to a non-root UID (e.g. 1000).
+  description: Containers running as root (UID 0) increase blast radius if compromised. Root inside a container can map to root on the host depending on kernel configuration.
+  remediation: Set runAsUser to a non-root UID (e.g. 1000) in the pod or container securityContext.
   docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   condition:
     field: container.user

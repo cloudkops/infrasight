@@ -2,15 +2,43 @@
   title: Container running as root
   severity: HIGH
   category: security
-  description: Containers should not run as root user.
-  remediation: Set runAsUser to a non-root UID in the pod securityContext.
+  description: Containers running as root (UID 0) increase blast radius if compromised. Root inside a container can map to root on the host depending on kernel configuration.
+  remediation: Set runAsUser to a non-root UID (e.g. 1000) in the pod or container securityContext.
   docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   condition:
     field: container.user
     equals: 0
+
 - id: ISG-SEC-002
-  title: Privileged container
+  title: Privileged container detected
   severity: CRITICAL
+  category: security
+  description: Privileged containers run with all Linux capabilities and host access equivalent to root on the node. This bypasses namespace isolation entirely.
+  remediation: Set privileged to false and grant only the minimum required Linux capabilities.
+  docs_url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
   condition:
     field: container.privileged
     equals: true
+
+- id: ISG-SEC-003
+  title: Container using host network namespace
+  severity: HIGH
+  category: security
+  description: hostNetwork grants the container access to the node network stack, bypassing CNI network policies and exposing host services.
+  remediation: Remove hostNetwork or move the workload to a dedicated node with restricted access.
+  docs_url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+  condition:
+    field: container.exposure.hostNetwork
+    equals: true
+
+- id: ISG-SEC-004
+  title: Container exposed to public internet
+  severity: CRITICAL
+  category: security
+  description: Containers with publicIP exposure are directly reachable from the internet and are a high-value attack surface.
+  remediation: Use an Ingress with TLS termination instead of a direct public IP. Add network policies to restrict inbound traffic.
+  docs_url: https://kubernetes.io/docs/concepts/services-networking/ingress/
+  condition:
+    field: container.exposure.publicIP
+    equals: true
+

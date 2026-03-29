@@ -1,0 +1,33 @@
+- id: ISG-STR-GOV-001
+  title: Workload missing mandatory label - team
+  severity: MEDIUM
+  category: governance
+  description: Strict runtime workloads must carry the team label for incident escalation, cost reporting, and change-approval routing. Missing labels cause audit gaps.
+  remediation: Add metadata.labels.team with the canonical team identifier from your organisation directory.
+  docs_url: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  condition:
+    field: workload.labels.team
+    equals: ""
+
+- id: ISG-STR-GOV-002
+  title: Workload missing mandatory label - env
+  severity: MEDIUM
+  category: governance
+  description: The env label is required for strict runtime policy enforcement. Without it network policies, PodSecurityAdmission, and cost-split dashboards cannot reliably scope their rules.
+  remediation: Set metadata.labels.env to one of production, staging, development, or review.
+  docs_url: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  condition:
+    field: workload.labels.env
+    equals: ""
+
+- id: ISG-STR-GOV-003
+  title: Workload missing mandatory label - version
+  severity: LOW
+  category: governance
+  description: Versioned workloads are essential for progressive delivery and rollback tracing. Unversioned workloads cannot be included in canary or blue/green traffic splits.
+  remediation: Add metadata.labels.version matching the container image tag or release SHA.
+  docs_url: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  condition:
+    field: workload.labels.version
+    equals: ""
+

@@ -1,10 +1,22 @@
-id: ISG-SEC-001
-title: Container running as root
-severity: HIGH
-category: security
-description: Containers running as root increase blast radius.
-remediation: Set runAsUser to a non-root UID (e.g. 1000).
-docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
-condition:
-  field: container.user
-  equals: 0
+- id: ISG-SEC-001
+  title: Container running as root
+  severity: HIGH
+  category: security
+  description: Containers running as root increase blast radius.
+  remediation: Set runAsUser to a non-root UID (e.g. 1000).
+  docs_url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  condition:
+    field: container.user
+    equals: 0
+
+- id: ISG-SEC-002
+  title: Privileged container
+  severity: CRITICAL
+  category: security
+  description: Privileged containers bypass kernel isolation.
+  remediation: Set privileged to false.
+  docs_url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+  condition:
+    field: container.privileged
+    equals: true
+

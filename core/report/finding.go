@@ -12,3 +12,7 @@ type Finding struct {
 	Container   string `json:"container"`
 	Field       string `json:"field"`
 }
+
+func (f Finding) GetSeverity() string {
+	return f.Severity
+}

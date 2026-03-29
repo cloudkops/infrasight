@@ -10,12 +10,14 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build        Build the binary into $(BUILD_DIR)/$(BINARY_NAME)"
-	@echo "  run          Build and run the binary (pass ARGS=\"...\" for CLI args)"
-	@echo "  install      Install the binary into $$GOBIN or $$GOPATH/bin"
-	@echo "  test         Run unit tests"
-	@echo "  tidy         Add missing and remove unused modules"
-	@echo "  clean        Remove build artifacts"
+	@echo "  build              Build the binary into $(BUILD_DIR)/$(BINARY_NAME)"
+	@echo "  run                Build and run (pass ARGS=\"...\" for CLI args)"
+	@echo "  install            Install the binary into \$$GOBIN or \$$GOPATH/bin"
+	@echo "  test               Run unit tests"
+	@echo "  coverage           Run tests with coverage report"
+	@echo "  lint               Run golangci-lint"
+	@echo "  tidy               Add missing and remove unused modules"
+	@echo "  clean              Remove build artifacts"
 
 .PHONY: tidy
 tidy:
@@ -38,6 +40,17 @@ install: build
 test:
 	$(GO) test ./...
 
+.PHONY: coverage
+coverage:
+	$(GO) test ./... -coverprofile=coverage.out
+	$(GO) tool cover -func=coverage.out
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report written to coverage.html"
+
+.PHONY: lint
+lint:
+	golangci-lint run ./...
+
 .PHONY: clean
 clean:
-	@rm -rf $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR) coverage.out coverage.html

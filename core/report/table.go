@@ -1,20 +1,51 @@
 package report
 
-import "fmt"
+import (
+	"io"
+	"os"
 
+	"github.com/olekukonko/tablewriter"
+)
+
+// PrintTable writes a findings table to stdout (backward-compat).
 func PrintTable(findings []Finding) {
-	fmt.Printf("\n%-15s %-10s %-12s %-15s %-20s\n",
-		"RULE", "SEVERITY", "WORKLOAD", "CONTAINER", "FIELD")
+	WriteTable(os.Stdout, findings)
+}
 
-	for _, f := range findings {
-		fmt.Printf("%-15s %-10s %-12s %-15s %-20s\n",
-			f.RuleID, f.Severity, f.Workload, f.Container, f.Field)
+// WriteTable renders findings as a formatted table to w.
+func WriteTable(w io.Writer, findings []Finding) {
+	if len(findings) == 0 {
+		_, _ = io.WriteString(w, "\n✅  No findings.\n")
+		return
 	}
 
-	fmt.Println("--- Remediation ---")
+	tbl := tablewriter.NewTable(w)
+	tbl.Header("Rule", "Severity", "Workload", "Container", "Field", "Title")
 
 	for _, f := range findings {
-		fmt.Println("→ ", f.Remediation)
-		fmt.Println("→ Docs: ", f.DocsUrl)
+		_ = tbl.Append(f.RuleID, f.Severity, f.Workload, f.Container, f.Field, f.Title)
 	}
+
+	_ = tbl.Render()
+
+	if hasRemediation(findings) {
+		_, _ = io.WriteString(w, "\n── Remediation ─────────────────────────────────────────────\n")
+		for _, f := range findings {
+			if f.Remediation != "" {
+				_, _ = io.WriteString(w, "  ["+f.RuleID+"] "+f.Remediation+"\n")
+			}
+			if f.DocsUrl != "" {
+				_, _ = io.WriteString(w, "  └─ Docs: "+f.DocsUrl+"\n")
+			}
+		}
+	}
+}
+
+func hasRemediation(findings []Finding) bool {
+	for _, f := range findings {
+		if f.Remediation != "" || f.DocsUrl != "" {
+			return true
+		}
+	}
+	return false
 }

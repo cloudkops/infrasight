@@ -13,5 +13,14 @@ func Load(path string) ([]Rule, error) {
 	}
 	var rules []Rule
 	err = yaml.Unmarshal(data, &rules)
-	return rules, err
+	if err != nil {
+		return nil, err
+	}
+
+	err = ValidateRules(rules)
+	if err != nil {
+		return nil, err
+	}
+
+	return rules, nil
 }
