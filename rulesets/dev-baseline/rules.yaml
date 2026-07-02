@@ -1,0 +1,69 @@
+# Lower-severity, developer-oriented guardrails — flags the same risky patterns as
+# security-baseline but at reduced severity, so local/dev clusters don't fail CI
+# gates over things that are genuine issues in prod but routine in dev.
+
+- id: "ISG-DEV-001"
+  title: "Container running as root"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container's securityContext.runAsUser is 0 (root)."
+  remediation: "Set securityContext.runAsUser to a non-zero UID or runAsNonRoot: true."
+  provider: "kubernetes"
+  condition:
+    field: "container.user"
+    equals: 0
+
+- id: "ISG-DEV-002"
+  title: "Privileged container"
+  severity: "HIGH"
+  category: "security"
+  description: "Container runs with securityContext.privileged: true."
+  remediation: "Remove privileged: true; grant only the specific Linux capabilities the workload needs."
+  provider: "kubernetes"
+  condition:
+    field: "container.privileged"
+    equals: true
+
+- id: "ISG-DEV-003"
+  title: "Missing CPU limit"
+  severity: "LOW"
+  category: "resources"
+  description: "Container has no CPU limit set."
+  remediation: "Set resources.limits.cpu."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.cpu_limit"
+    exists: false
+
+- id: "ISG-DEV-004"
+  title: "Missing memory limit"
+  severity: "LOW"
+  category: "resources"
+  description: "Container has no memory limit set."
+  remediation: "Set resources.limits.memory."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.memory_limit"
+    exists: false
+
+- id: "ISG-DEV-005"
+  title: "Missing team label"
+  severity: "LOW"
+  category: "governance"
+  description: "Resource has no 'team' label, making ownership hard to trace."
+  remediation: "Add a 'team' label identifying the owning team."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.team"
+    exists: false
+
+- id: "ISG-DEV-006"
+  title: "Missing app label"
+  severity: "LOW"
+  category: "governance"
+  description: "Resource has no 'app' label, making it hard to associate with a service."
+  remediation: "Add an 'app' label identifying the application."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.app"
+    exists: false

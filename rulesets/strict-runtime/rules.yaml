@@ -1,0 +1,127 @@
+# Hardened controls for production workloads — every security-baseline check at
+# its highest severity, plus additional runtime-hardening fields (privilege
+# escalation, read-only root filesystem, host PID/IPC namespaces) that
+# security-baseline intentionally leaves out to stay approachable as a first gate.
+
+- id: "ISG-STR-001"
+  title: "Container running as root"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container's securityContext.runAsUser is 0 (root)."
+  remediation: "Set securityContext.runAsUser to a non-zero UID or runAsNonRoot: true."
+  provider: "kubernetes"
+  condition:
+    field: "container.user"
+    equals: 0
+
+- id: "ISG-STR-002"
+  title: "Privileged container"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container runs with securityContext.privileged: true."
+  remediation: "Remove privileged: true; grant only the specific Linux capabilities the workload needs."
+  provider: "kubernetes"
+  condition:
+    field: "container.privileged"
+    equals: true
+
+- id: "ISG-STR-003"
+  title: "Privilege escalation allowed"
+  severity: "HIGH"
+  category: "security"
+  description: "Container does not set allowPrivilegeEscalation: false, so a process can gain more privileges than its parent."
+  remediation: "Set securityContext.allowPrivilegeEscalation: false."
+  provider: "kubernetes"
+  condition:
+    field: "container.security.allow_privilege_escalation"
+    equals: true
+
+- id: "ISG-STR-004"
+  title: "Writable root filesystem"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container does not set readOnlyRootFilesystem: true, allowing runtime tampering with its own filesystem."
+  remediation: "Set securityContext.readOnlyRootFilesystem: true and mount an emptyDir for any paths that must be writable."
+  provider: "kubernetes"
+  condition:
+    field: "container.security.read_only_root_filesystem"
+    equals: false
+
+- id: "ISG-STR-005"
+  title: "Host network enabled"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Pod uses hostNetwork: true, exposing it directly on the node's network namespace."
+  remediation: "Remove hostNetwork: true unless the workload specifically requires node networking."
+  provider: "kubernetes"
+  condition:
+    field: "networking.hostNetwork"
+    equals: true
+
+- id: "ISG-STR-006"
+  title: "Host PID namespace enabled"
+  severity: "HIGH"
+  category: "security"
+  description: "Pod uses hostPID: true, giving it visibility into every process on the node."
+  remediation: "Remove hostPID: true unless the workload specifically requires node-level process visibility."
+  provider: "kubernetes"
+  condition:
+    field: "resource.host_pid"
+    equals: true
+
+- id: "ISG-STR-007"
+  title: "Host IPC namespace enabled"
+  severity: "HIGH"
+  category: "security"
+  description: "Pod uses hostIPC: true, sharing the host's inter-process communication namespace."
+  remediation: "Remove hostIPC: true unless the workload specifically requires it."
+  provider: "kubernetes"
+  condition:
+    field: "resource.host_ipc"
+    equals: true
+
+- id: "ISG-STR-008"
+  title: "NodePort or LoadBalancer service exposed"
+  severity: "HIGH"
+  category: "security"
+  description: "Service is directly reachable from outside the cluster network."
+  remediation: "Prefer ClusterIP with an Ingress/Gateway, or restrict with a NetworkPolicy/firewall rule."
+  provider: "kubernetes"
+  any_of:
+    - field: "networking.nodePort"
+      equals: true
+    - field: "networking.loadBalancer"
+      equals: true
+
+- id: "ISG-STR-009"
+  title: "Missing CPU limit"
+  severity: "HIGH"
+  category: "resources"
+  description: "Container has no CPU limit set, risking noisy-neighbor CPU contention in production."
+  remediation: "Set resources.limits.cpu."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.cpu_limit"
+    exists: false
+
+- id: "ISG-STR-010"
+  title: "Missing memory limit"
+  severity: "HIGH"
+  category: "resources"
+  description: "Container has no memory limit set, risking OOM-related node instability in production."
+  remediation: "Set resources.limits.memory."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.memory_limit"
+    exists: false
+
+- id: "ISG-STR-011"
+  title: "Missing team label"
+  severity: "MEDIUM"
+  category: "governance"
+  description: "Resource has no 'team' label, making ownership hard to trace during an incident."
+  remediation: "Add a 'team' label identifying the owning team."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.team"
+    exists: false

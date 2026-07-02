@@ -1,0 +1,23 @@
+- id: "ISG-CI-001"
+  title: "Privileged container"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container runs with securityContext.privileged: true."
+  remediation: "Remove privileged: true; grant only the specific Linux capabilities the workload needs."
+  provider: "kubernetes"
+  condition:
+    field: "container.privileged"
+    equals: true
+
+- id: "ISG-CI-002"
+  title: "Container running as root with no privilege-escalation guard"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container runs as root (UID 0) and privileged, the highest-risk combination."
+  remediation: "Set runAsNonRoot: true and remove privileged: true."
+  provider: "kubernetes"
+  conditions:
+    - field: "container.user"
+      equals: 0
+    - field: "container.privileged"
+      equals: true

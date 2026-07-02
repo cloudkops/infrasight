@@ -1,0 +1,120 @@
+- id: "ISG-SEC-001"
+  title: "Container running as root"
+  severity: "HIGH"
+  category: "security"
+  description: "Container's securityContext.runAsUser is 0 (root)."
+  remediation: "Set securityContext.runAsUser to a non-zero UID or runAsNonRoot: true."
+  provider: "kubernetes"
+  condition:
+    field: "container.user"
+    equals: 0
+
+- id: "ISG-SEC-002"
+  title: "Privileged container"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container runs with securityContext.privileged: true, granting near-host-root access."
+  remediation: "Remove privileged: true; grant only the specific Linux capabilities the workload needs."
+  provider: "kubernetes"
+  condition:
+    field: "container.privileged"
+    equals: true
+
+- id: "ISG-SEC-003"
+  title: "Host network enabled"
+  severity: "HIGH"
+  category: "security"
+  description: "Pod uses hostNetwork: true, exposing it directly on the node's network namespace."
+  remediation: "Remove hostNetwork: true unless the workload specifically requires node networking."
+  provider: "kubernetes"
+  condition:
+    field: "networking.hostNetwork"
+    equals: true
+
+- id: "ISG-SEC-004"
+  title: "NodePort service exposed"
+  severity: "HIGH"
+  category: "security"
+  description: "Service type NodePort exposes a port on every node in the cluster."
+  remediation: "Prefer ClusterIP with an Ingress/Gateway, or restrict NodePort with a NetworkPolicy."
+  provider: "kubernetes"
+  condition:
+    field: "networking.nodePort"
+    equals: true
+
+- id: "ISG-RES-001"
+  title: "Missing CPU limit"
+  severity: "MEDIUM"
+  category: "resources"
+  description: "Container has no CPU limit set, risking noisy-neighbor CPU contention."
+  remediation: "Set resources.limits.cpu."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.cpu_limit"
+    exists: false
+
+- id: "ISG-RES-002"
+  title: "Missing memory limit"
+  severity: "MEDIUM"
+  category: "resources"
+  description: "Container has no memory limit set, risking OOM-related node instability."
+  remediation: "Set resources.limits.memory."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.memory_limit"
+    exists: false
+
+- id: "ISG-RES-003"
+  title: "Missing CPU request"
+  severity: "LOW"
+  category: "resources"
+  description: "Container has no CPU request set, reducing scheduler accuracy."
+  remediation: "Set resources.requests.cpu."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.cpu_request"
+    exists: false
+
+- id: "ISG-RES-004"
+  title: "Missing memory request"
+  severity: "LOW"
+  category: "resources"
+  description: "Container has no memory request set, reducing scheduler accuracy."
+  remediation: "Set resources.requests.memory."
+  provider: "kubernetes"
+  condition:
+    field: "container.resources.memory_request"
+    exists: false
+
+- id: "ISG-GOV-001"
+  title: "Missing team label"
+  severity: "LOW"
+  category: "governance"
+  description: "Resource has no 'team' label, making ownership hard to trace."
+  remediation: "Add a 'team' label identifying the owning team."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.team"
+    exists: false
+
+- id: "ISG-GOV-002"
+  title: "Missing environment label"
+  severity: "LOW"
+  category: "governance"
+  description: "Resource has no 'env' label, making environment identification hard."
+  remediation: "Add an 'env' label (e.g. prod, staging, dev)."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.env"
+    exists: false
+
+- id: "ISG-GOV-003"
+  title: "Missing app label"
+  severity: "LOW"
+  category: "governance"
+  description: "Resource has no 'app' label, making it hard to associate with a service."
+  remediation: "Add an 'app' label identifying the application."
+  provider: "kubernetes"
+  condition:
+    field: "resource.labels.app"
+    exists: false
