@@ -92,6 +92,92 @@ test/fixtures/<provider>/        Reserved for fixture files; Kubernetes tests
 
 ---
 
+## End-to-end workflow diagram
+
+Generic across every provider (Kubernetes is the only one implemented today, but
+nothing below is Kubernetes-specific except inside the `Provider.Discover` box —
+see `k8s.md` §2 for that box expanded in full Kubernetes detail).
+
+```
+User
+  │  infrasight scan kubernetes --ruleset ./rulesets/security-baseline -n prod
+  ▼
+cmd/infrasight/main.go
+  │  blank-imports every provider + report format package
+  │  → each package's init() calls provider.Register(...) / report.Register(...)
+  │  → app.Execute()
+  ▼
+internal/app                                   ── CLI layer, no scanning logic ──
+  │  app.go        root cobra command
+  │  scan_cmd.go   `scan <provider>` subcommands, built from provider.Manager.List()
+  │  dispatcher.go dispatch() — the Command Dispatcher
+  ▼
+internal/scan/orchestrator.Run(ctx, manager, Request)
+  │
+  ├─ 1. manager.Get(providerName) ─────────────────────► internal/provider.Registry
+  │                                                        name → Provider
+  │                                                        (registered at startup,
+  │                                                         each provider's own init())
+  ├─ 2. manager.Initialize(provider)                       (no-op today)
+  │
+  ├─ 3. internal/scan/pipeline.Run(ctx, provider, opts)
+  │        │
+  │        ├─ a. Provider.Discover(ctx, opts)    ── provider-specific, self-contained ──
+  │        │        client.go     connect (live providers only)
+  │        │        discovery.go  list native objects, partial-failure tolerant
+  │        │        normalize.go  native objects → []resource.Resource
+  │        │
+  │        ├─ b. resource.Validate(r)             for every resource — abort on malformed
+  │        │
+  │        ├─ c. EnrichAttributes(resources)       generic, every provider
+  │        │        Security.Flatten() / Networking.Flatten() → Attributes
+  │        │
+  │        └─ d. ResolveRelationships(resources)   generic, every provider
+  │                 drop a resource whose Owner matches another already kept
+  │        ▼
+  │     []resource.Resource
+  │
+  ├─ 4. internal/rule/parser.Load / LoadRuleset(dir, providerName)
+  │        YAML → []Rule, validated, filtered to this provider's tag
+  │
+  ├─ 5. internal/scan/engine.Scan(ScanRequest{Resources, Rules})
+  │        │
+  │        └─ internal/rule/engine.Evaluate(resources, rules)
+  │               for every resource × container × rule:
+  │                 internal/rule/evaluator.Match(r, c, condition)
+  │                   resolveField(field)         typed fast path, else Attributes
+  │                   operatorNameFor(condition) ──────► internal/rule/evaluator.Registry
+  │                                                         name → Operator
+  │                                                         (equals/not_equals/contains/exists)
+  │                 match → report.Finding{...}
+  │        ▼
+  │     ScanResult{Findings, ResourceCount, RuleCount}
+  │
+  └─ 6. manager.Shutdown(provider)                          (no-op today)
+  ▼
+internal/app/dispatcher.go   (resumes after orchestrator.Run returns)
+  │
+  ├─ report.Get(format) ────────────────────────────────► internal/report.Registry
+  │                                                          name → Renderer
+  │                                                          (table/json/sarif/markdown,
+  │                                                           self-registered via init())
+  ├─ renderer.Write(out, findings)
+  ├─ report.WriteSummary(stderr, findings, counts)
+  └─ report.ExitCode(findings, failOn) ──► process exit code (0 / 1 / 2 / 3)
+```
+
+Three distinct points resolve something **by name from a registry** rather than a
+hardcoded switch — `internal/provider.Registry` (provider name → `Provider`),
+`internal/rule/evaluator.Registry` (operator name → `Operator`), and
+`internal/report.Registry` (format name → `Renderer`). Everything else in the
+diagram (`resource.Validate`, `EnrichAttributes`, `ResolveRelationships`,
+`rule/engine.Evaluate`) is a single fixed implementation, not a registry — there's
+exactly one way to do each, so a registry would just be indirection with nothing to
+select between. Reach for a registry only when there's a real "given a name, pick
+one of several interchangeable implementations" problem, the way these three have.
+
+---
+
 ## 3. How the Provider contract works, and how to add a provider
 
 `internal/provider.Provider` is the only thing `internal/app` and `internal/scan`
