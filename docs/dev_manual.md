@@ -58,7 +58,7 @@ internal/rule/                  The Rule Engine — see §5
   parser/                          Rule/Condition YAML schema, loading, validation,
                                     severity ranking
   evaluator/                       Field resolution (resolveField) + Operator
-                                    Registry (equals/not_equals/contains/exists)
+                                    Registry (13 operators — see rulesets_manual.md §3)
   engine/                          Evaluate(): the resource x container x rule loop
 
 internal/scan/                  Orchestration — see §6
@@ -148,7 +148,7 @@ internal/scan/orchestrator.Run(ctx, manager, Request)
   │                   resolveField(field)         typed fast path, else Attributes
   │                   operatorNameFor(condition) ──────► internal/rule/evaluator.Registry
   │                                                         name → Operator
-  │                                                         (equals/not_equals/contains/exists)
+  │                                                         (13 operators — rulesets_manual.md §3)
   │                 match → report.Finding{...}
   │        ▼
   │     ScanResult{Findings, ResourceCount, RuleCount}
@@ -285,15 +285,22 @@ only references fields already covered by §4.
 `provider: kubernetes` (or whichever provider). Nothing else needs registering;
 `--ruleset <dir>` just points at it.
 
-**To add a new condition operator** (e.g. `greater_than`, `regex` — both are still
-on the backlog per `scope.md`):
+**To add a new condition operator** (13 exist today — see `rulesets_manual.md` §3
+for the full list — but the process is the same for the next one):
 1. Implement the `Operator` interface in `internal/rule/evaluator/operator.go`:
    `Name() string`, `Match(actual any, cond parser.Condition) bool`.
 2. Register it in `registry.go`'s `init()`.
 3. Add a corresponding field to `parser.Condition` (`rule.go`) if the operator
-   needs a new YAML key (e.g. `greater_than: "250m"`), and a case in
-   `operatorNameFor` (`evaluator.go`) so a condition using that key resolves to
-   your operator's name.
+   needs a new YAML key (e.g. `greater_than: 2`), and one entry to
+   `conditionOperators` (`evaluator.go`) — a slice of `{name, set-predicate}`
+   pairs checked in order by `operatorNameFor`, not a switch — so a condition
+   using that key resolves to your operator's name. Where you insert the entry in
+   the slice is its precedence when a condition (incorrectly) sets more than one
+   operator key at once.
+4. If the operator's argument can be malformed in a way that would otherwise fail
+   silently at scan time (regex did — see `validateCondition` in
+   `parser/validate.go`), add a load-time check there instead of letting it
+   silently never-match.
 
 ---
 
@@ -372,9 +379,10 @@ gofmt -l .          # should print nothing
   implementing.
 - No config file (`infrasight.yaml`) yet — every flag is passed on the command
   line. Planned as `plan.md` phase 11.
-- No `greater_than`/`less_than`/`regex`/`in`/`not_in` operators yet — the Operator
-  Registry supports adding them (§5) but only `equals`/`not_equals`/`contains`/
-  `exists` exist today.
+- Numeric operators (`greater_than`/`less_than`/`greater_than_or_equal`/
+  `less_than_or_equal`) parse plain numbers only, not Kubernetes resource
+  quantities (`"500m"`, `"2Gi"`) — see `rulesets_manual.md` §3. Quantity-aware
+  parsing is still on the backlog (`scope.md`).
 - Per-provider flag sets aren't separated — every `scan <provider>` subcommand
   currently binds the same flag set (including Kubernetes-only ones like
   `--kubeconfig`), since only one provider exists. This needs revisiting once a

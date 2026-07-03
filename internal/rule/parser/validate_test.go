@@ -40,6 +40,23 @@ func TestValidateRule(t *testing.T) {
 			}},
 			wantErr: false,
 		},
+		{
+			name:    "invalid regex fails at load time, not silently at eval time",
+			rule:    Rule{ID: "r1", Title: "t", Severity: "HIGH", Condition: Condition{Field: "container.image", Regex: "(unclosed"}},
+			wantErr: true,
+		},
+		{
+			name:    "valid regex",
+			rule:    Rule{ID: "r1", Title: "t", Severity: "HIGH", Condition: Condition{Field: "container.image", Regex: "^docker.io/"}},
+			wantErr: false,
+		},
+		{
+			name: "invalid regex inside any_of is also caught",
+			rule: Rule{ID: "r1", Title: "t", Severity: "HIGH", AnyOf: []Condition{
+				{Field: "container.image", Regex: "["},
+			}},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {

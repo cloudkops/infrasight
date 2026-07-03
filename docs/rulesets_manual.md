@@ -69,29 +69,60 @@ backlog item.
 
 ```yaml
 condition:
-  field: "container.user"   # required — dotted path, see §4 for the full list
-  equals: 0                 # OR
-  not_equals: 0              # OR
-  contains: "sub"            # OR
-  exists: true               # can be used alone, or combined with the above (rare)
+  field: "container.user"     # required — dotted path, see §4 for the full list
+  equals: 0                   # OR any one of the operator keys below
+  not_equals: 0
+  contains: "sub"
+  not_contains: "sub"
+  starts_with: "prefix"
+  ends_with: "suffix"
+  regex: "^pattern$"
+  in: [0, 1000]
+  not_in: ["latest"]
+  greater_than: 2
+  less_than: 2
+  greater_than_or_equal: 2
+  less_than_or_equal: 2
+  exists: true                 # can be used alone, or as the implicit default below
 ```
 
-Set **at most one** of `equals`/`not_equals`/`contains` per condition — whichever
-one is set determines which operator runs. If none of the three are set, the
-condition is an `exists` check: `exists: true` means "field must be present/set/
-truthy", `exists: false` means "field must be absent/unset". This is why you'll see
-`exists: false` used for "missing X" rules (§6) rather than a `not_equals`.
+Set **at most one** operator key per condition — whichever one is set determines
+which operator runs (see the precedence table below for what happens if you set
+more than one). If none of them are set, the condition is an `exists` check:
+`exists: true` means "field must be present/set/truthy", `exists: false` means
+"field must be absent/unset". This is why you'll see `exists: false` used for
+"missing X" rules (§6) rather than a `not_equals`.
 
 | YAML key | Operator | Matches when |
 |---|---|---|
 | `equals` | `equals` | resolved value == the given value (works for strings, bools, and numbers) |
 | `not_equals` | `not_equals` | resolved value != the given value |
 | `contains` | `contains` | resolved value (as a string) contains the substring |
+| `not_contains` | `not_contains` | resolved value (as a string) does **not** contain the substring |
+| `starts_with` | `starts_with` | resolved value (as a string) has the given prefix |
+| `ends_with` | `ends_with` | resolved value (as a string) has the given suffix |
+| `regex` | `regex` | resolved value (as a string) matches the given RE2 pattern (Go's `regexp` syntax) |
+| `in` | `in` | resolved value equals one of the given list's entries |
+| `not_in` | `not_in` | resolved value equals none of the given list's entries |
+| `greater_than` / `less_than` / `greater_than_or_equal` / `less_than_or_equal` | same name | resolved value, parsed as a plain number, compares as expected — see the numeric caveat below |
 | *(none of the above)* | `exists` | field is present (`exists: true`) or absent (`exists: false`) |
 
-Only these four exist today. `greater_than`/`less_than`/`regex`/`in`/`not_in` are
-on the backlog (`scope.md`) — adding one is a small, contained Go change (see
-`dev_manual.md` §5), not a rewrite.
+**Numeric operators don't understand Kubernetes quantity suffixes.** `greater_than`
+et al. parse the resolved value as a plain `float64` (via `strconv.ParseFloat`) —
+a value like `"2"` or `2` works, but `container.resources.cpu_limit`/`memory_limit`
+are Kubernetes quantity strings (`"500m"`, `"2Gi"`) and will simply fail to parse,
+making the condition never match rather than compare incorrectly. Use `exists`
+against those two fields (as `dev-baseline`/`security-baseline` already do), not
+numeric comparison, until quantity-aware parsing is added (`scope.md` backlog).
+Numeric operators work well against plain numeric attributes instead — e.g. a
+future provider exposing `resource.replica_count` as a bare integer.
+
+**`in`/`not_in` and empty/missing fields:** both require the field to resolve to a
+value first — same as every operator except `exists` (§3's `Match` short-circuits
+to `false` on an unresolved field before calling any operator, `exists` excepted).
+An absent field is never "in" anything, and is also never "not_in" anything
+(despite the name) — if you need "field is absent OR not in this list," use
+`any_of` with an explicit `exists: false` alongside the `not_in` condition.
 
 ---
 
@@ -284,6 +315,39 @@ that all silently fail to match.
     contains: "legacy-base"
 ```
 
+**Regex — flag images from any registry other than an approved one:**
+```yaml
+- id: "ISG-IMG-002"
+  title: "Image not pulled from the approved registry"
+  severity: "MEDIUM"
+  provider: "kubernetes"
+  condition:
+    field: "container.image"
+    regex: "^(?!registry\\.internal\\.example\\.com/)"
+```
+
+**`in` — flag a specific set of tags regardless of registry:**
+```yaml
+- id: "ISG-IMG-003"
+  title: "Uses a floating/unpinned tag"
+  severity: "MEDIUM"
+  provider: "kubernetes"
+  condition:
+    field: "container.image"
+    ends_with: ":latest"
+```
+
+**Numeric comparison against a plain attribute (not a quantity string):**
+```yaml
+- id: "ISG-GOV-004"
+  title: "Too many replicas for a dev namespace"
+  severity: "LOW"
+  provider: "kubernetes"
+  condition:
+    field: "resource.replica_count"   # hypothetical — only if a provider sets this
+    greater_than: 3
+```
+
 ---
 
 ## 7. Validating a new rule before shipping it
@@ -311,12 +375,22 @@ Or, if you're comfortable with Go, add your ruleset's expected rule count to
 - **`exists: false` is not the same as `not_equals`.** `not_equals: 0` matches a
   field that's present *and* different from `0` — it does **not** match a field
   that's absent. Use `exists: false` for "this wasn't set at all."
-- **Don't set more than one of `equals`/`not_equals`/`contains`** on the same
-  condition — only one operator runs, in this precedence: `not_equals` first,
-  then `contains`, then `equals` (see `operatorNameFor` in
-  `internal/rule/evaluator/evaluator.go`). If you set both `equals` and
+- **Don't set more than one operator key** on the same condition — only one runs,
+  in this precedence (highest first): `not_equals` → `not_in` → `not_contains` →
+  `in` → `contains` → `starts_with` → `ends_with` → `regex` →
+  `greater_than_or_equal` → `less_than_or_equal` → `greater_than` → `less_than` →
+  `equals` (see `conditionOperators` in `internal/rule/evaluator/evaluator.go`,
+  checked top-to-bottom by `operatorNameFor`). If you set both `equals` and
   `contains`, `contains` silently wins and `equals` is ignored — write two
   separate conditions instead if you need both checks.
+- **`greater_than`/`less_than`/`greater_than_or_equal`/`less_than_or_equal` parse
+  the field as a plain number** (`strconv.ParseFloat`), not a Kubernetes quantity —
+  see §3's numeric caveat. Using them against `container.resources.cpu_limit` with
+  a value like `"500m"` will never match, silently, same as an unknown field would.
+- **A malformed `regex` pattern is the one operator input that fails loudly** —
+  `ValidateRule` compiles it at load time and rejects the whole ruleset if it
+  doesn't parse, rather than letting it silently never-match at scan time like an
+  unknown field does.
 - **An unknown field name fails silently**, it does not error at load time —
   `resolveField` just returns "not found," so a typo like `containre.user` makes
   the condition permanently false rather than crashing. Double-check field names

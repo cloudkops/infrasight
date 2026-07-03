@@ -30,21 +30,42 @@ func Match(r resource.Resource, c resource.Container, cond parser.Condition) boo
 	return op.Match(actual, cond)
 }
 
+// conditionOperators lists every operator key a Condition can set, in the
+// precedence order used when more than one is populated on the same condition
+// (only one operator ever runs — see docs/rulesets_manual.md's pitfalls section).
+// Adding an operator means appending one entry here and to registry.go's init() —
+// operatorNameFor itself never grows a new branch.
+var conditionOperators = []struct {
+	name string
+	set  func(parser.Condition) bool
+}{
+	{"not_equals", func(c parser.Condition) bool { return c.NotEquals != nil }},
+	{"not_in", func(c parser.Condition) bool { return c.NotIn != nil }},
+	{"not_contains", func(c parser.Condition) bool { return c.NotContains != "" }},
+	{"in", func(c parser.Condition) bool { return c.In != nil }},
+	{"contains", func(c parser.Condition) bool { return c.Contains != "" }},
+	{"starts_with", func(c parser.Condition) bool { return c.StartsWith != "" }},
+	{"ends_with", func(c parser.Condition) bool { return c.EndsWith != "" }},
+	{"regex", func(c parser.Condition) bool { return c.Regex != "" }},
+	{"greater_than_or_equal", func(c parser.Condition) bool { return c.GreaterThanOrEqual != nil }},
+	{"less_than_or_equal", func(c parser.Condition) bool { return c.LessThanOrEqual != nil }},
+	{"greater_than", func(c parser.Condition) bool { return c.GreaterThan != nil }},
+	{"less_than", func(c parser.Condition) bool { return c.LessThan != nil }},
+	{"equals", func(c parser.Condition) bool { return c.Equals != nil }},
+}
+
 // operatorNameFor infers which operator a Condition expresses from whichever field
 // is populated — this keeps the YAML schema's ergonomic shorthand (equals/
-// not_equals/contains/exists as direct keys) while still resolving through the
-// Operator Registry rather than a hardcoded switch on comparison logic.
+// not_equals/contains/exists/... as direct keys) while still resolving through the
+// Operator Registry rather than a hardcoded switch on comparison logic. A
+// Condition with none of conditionOperators set is an exists check.
 func operatorNameFor(cond parser.Condition) string {
-	switch {
-	case cond.NotEquals != nil:
-		return "not_equals"
-	case cond.Contains != "":
-		return "contains"
-	case cond.Equals == nil && cond.NotEquals == nil && cond.Contains == "":
-		return "exists"
-	default:
-		return "equals"
+	for _, o := range conditionOperators {
+		if o.set(cond) {
+			return o.name
+		}
 	}
+	return "exists"
 }
 
 // resolveField resolves a dotted-path field against a Resource/Container pair.
