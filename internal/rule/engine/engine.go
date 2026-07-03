@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"strings"
+
 	"github.com/cloudkops/infrasight/internal/report"
 	"github.com/cloudkops/infrasight/internal/resource"
 	"github.com/cloudkops/infrasight/internal/rule/evaluator"
@@ -15,15 +17,25 @@ func Evaluate(resources []resource.Resource, rules []parser.Rule) []report.Findi
 	var findings []report.Finding
 	for _, r := range resources {
 		containers := r.Runtime.Containers
-		if len(containers) == 0 {
+		hasContainers := len(containers) > 0
+		if !hasContainers {
 			// Resources with no container/process concept (a bare host, a
-			// Terraform resource) still evaluate once against resource-level
-			// fields via a synthetic empty container.
+			// Terraform resource, a Kubernetes ConfigMap/Secret/Ingress/
+			// NetworkPolicy) still evaluate once against resource-level fields
+			// via a synthetic empty container. Rules that reference a
+			// container-scoped field are skipped below for these resources —
+			// otherwise "container.resources.cpu_limit exists: false" would
+			// spuriously match every containerless resource, since the field
+			// is just as absent on the synthetic container as it would be on
+			// a genuinely under-provisioned one.
 			containers = []resource.Container{{}}
 		}
 
 		for _, c := range containers {
 			for _, rule := range rules {
+				if !hasContainers && ruleReferencesContainerField(rule) {
+					continue
+				}
 				if !matchRule(r, c, rule) {
 					continue
 				}
@@ -65,6 +77,34 @@ func matchRule(r resource.Resource, c resource.Container, rule parser.Rule) bool
 		return false
 	}
 	return evaluator.Match(r, c, rule.Condition)
+}
+
+// ruleReferencesContainerField reports whether any condition on rule targets a
+// container-scoped field ("container.*", or "container_kind" which only exists
+// on init/ephemeral containers). Checked against the rule as a whole, not
+// per-condition — conditions (AND) and any_of (OR) that mix a container field
+// with a resource field don't exist in any shipped ruleset today, and skipping
+// the whole rule is the simpler, safer behavior until that combination is
+// actually needed.
+func ruleReferencesContainerField(rule parser.Rule) bool {
+	if isContainerScopedField(rule.Condition.Field) {
+		return true
+	}
+	for _, cond := range rule.Conditions {
+		if isContainerScopedField(cond.Field) {
+			return true
+		}
+	}
+	for _, cond := range rule.AnyOf {
+		if isContainerScopedField(cond.Field) {
+			return true
+		}
+	}
+	return false
+}
+
+func isContainerScopedField(field string) bool {
+	return strings.HasPrefix(field, "container.") || field == "container_kind"
 }
 
 func activeField(rule parser.Rule) string {

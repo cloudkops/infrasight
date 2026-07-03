@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -53,6 +54,18 @@ func NormalizeAll(raw *rawObjects) []resource.Resource {
 	}
 	for _, svc := range raw.services {
 		resources = append(resources, mapService(svc))
+	}
+	for _, cm := range raw.configMaps {
+		resources = append(resources, mapConfigMap(cm))
+	}
+	for _, s := range raw.secrets {
+		resources = append(resources, mapSecret(s))
+	}
+	for _, ing := range raw.ingresses {
+		resources = append(resources, mapIngress(ing))
+	}
+	for _, np := range raw.networkPolicies {
+		resources = append(resources, mapNetworkPolicy(np))
 	}
 	return resources
 }
@@ -171,6 +184,103 @@ func mapService(svc corev1.Service) resource.Resource {
 		Provider:   Name,
 		Metadata:   mapMetadata(svc.Labels, svc.Annotations),
 		Networking: mapServiceNetworking(svc),
+	}
+}
+
+// mapConfigMap deliberately never carries Data/BinaryData values into
+// Attributes — only shape (key count, immutability), since ConfigMap content is
+// routinely templated/large and out of scope for rule matching today.
+func mapConfigMap(cm corev1.ConfigMap) resource.Resource {
+	immutable := cm.Immutable != nil && *cm.Immutable
+	return resource.Resource{
+		ID:        resourceID("configmap", cm.UID, cm.Namespace, cm.Name),
+		Name:      cm.Name,
+		Namespace: cm.Namespace,
+		Kind:      "configmap",
+		Provider:  Name,
+		Metadata:  mapMetadata(cm.Labels, cm.Annotations),
+		Attributes: map[string]any{
+			"configmap.data_keys_count": len(cm.Data) + len(cm.BinaryData),
+			"configmap.immutable":       immutable,
+		},
+	}
+}
+
+// mapSecret never carries Data/StringData values into Attributes or anywhere
+// else in the resulting Resource — only its type and shape, so a Secret's
+// actual contents never pass through the scan pipeline, reports, or rule
+// evaluation.
+func mapSecret(s corev1.Secret) resource.Resource {
+	immutable := s.Immutable != nil && *s.Immutable
+	return resource.Resource{
+		ID:        resourceID("secret", s.UID, s.Namespace, s.Name),
+		Name:      s.Name,
+		Namespace: s.Namespace,
+		Kind:      "secret",
+		Provider:  Name,
+		Metadata:  mapMetadata(s.Labels, s.Annotations),
+		Attributes: map[string]any{
+			"secret.type":            string(s.Type),
+			"secret.data_keys_count": len(s.Data) + len(s.StringData),
+			"secret.immutable":       immutable,
+		},
+	}
+}
+
+func mapIngress(ing networkingv1.Ingress) resource.Resource {
+	var exposures []resource.Exposure
+	for range ing.Spec.Rules {
+		exposures = append(exposures, resource.Exposure{Type: "Ingress"})
+	}
+	if len(ing.Spec.Rules) == 0 && ing.Spec.DefaultBackend != nil {
+		exposures = append(exposures, resource.Exposure{Type: "Ingress"})
+	}
+
+	class := ""
+	if ing.Spec.IngressClassName != nil {
+		class = *ing.Spec.IngressClassName
+	}
+
+	return resource.Resource{
+		ID:         resourceID("ingress", ing.UID, ing.Namespace, ing.Name),
+		Name:       ing.Name,
+		Namespace:  ing.Namespace,
+		Kind:       "ingress",
+		Provider:   Name,
+		Metadata:   mapMetadata(ing.Labels, ing.Annotations),
+		Networking: resource.Networking{Exposures: exposures},
+		Attributes: map[string]any{
+			"ingress.tls_enabled": len(ing.Spec.TLS) > 0,
+			"ingress.rules_count": len(ing.Spec.Rules),
+			"ingress.class":       class,
+		},
+	}
+}
+
+// mapNetworkPolicy exposes shape (rule counts, whether the pod selector is
+// empty i.e. namespace-wide) rather than the full selector/rule structures —
+// enough for governance rules like "flag namespaces with no default-deny
+// policy" without a dedicated NetworkPolicy schema in internal/resource.
+func mapNetworkPolicy(np networkingv1.NetworkPolicy) resource.Resource {
+	policyTypes := make([]string, 0, len(np.Spec.PolicyTypes))
+	for _, pt := range np.Spec.PolicyTypes {
+		policyTypes = append(policyTypes, string(pt))
+	}
+	selectsAllPods := len(np.Spec.PodSelector.MatchLabels) == 0 && len(np.Spec.PodSelector.MatchExpressions) == 0
+
+	return resource.Resource{
+		ID:        resourceID("networkpolicy", np.UID, np.Namespace, np.Name),
+		Name:      np.Name,
+		Namespace: np.Namespace,
+		Kind:      "networkpolicy",
+		Provider:  Name,
+		Metadata:  mapMetadata(np.Labels, np.Annotations),
+		Attributes: map[string]any{
+			"networkpolicy.policy_types":        policyTypes,
+			"networkpolicy.ingress_rules_count": len(np.Spec.Ingress),
+			"networkpolicy.egress_rules_count":  len(np.Spec.Egress),
+			"networkpolicy.selects_all_pods":    selectsAllPods,
+		},
 	}
 }
 

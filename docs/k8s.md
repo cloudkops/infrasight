@@ -47,7 +47,8 @@ providers/kubernetes.Provider.Discover(ctx, opts)
         ├─ 2. discovery.go :: discoverAll() fans out one goroutine per resource type,
         │      shared ctx, partial-failure tolerant:
         │        Pods · ReplicaSets · Deployments · StatefulSets · DaemonSets ·
-        │        Jobs · CronJobs · Services   (8 fetches; ReplicaSets never returned
+        │        Jobs · CronJobs · Services · ConfigMaps · Secrets · Ingresses ·
+        │        NetworkPolicies   (12 fetches; ReplicaSets never returned
         │                                      as a resource, see §4)
         │      A single resource type failing (e.g. RBAC forbids `list jobs`) is
         │      collected into rawObjects.warnings; only every type failing aborts.
@@ -182,6 +183,27 @@ per-container) shared conceptually with every other provider:
 | Pod/template `spec.hostNetwork: true` | `"hostNetwork"` |
 | Service `type: NodePort` | `"NodePort"` (one per port) |
 | Service `type: LoadBalancer` | `"LoadBalancer"` (one per port) |
+| Ingress (has `spec.rules` or a `defaultBackend`) | `"Ingress"` (one per rule) |
+
+ConfigMap/Secret/NetworkPolicy carry no `Networking` exposures — they're
+config/governance objects, not reachability surfaces.
+
+**ConfigMap, Secret, NetworkPolicy — shape only, never content:** these three map
+to `Resource.Attributes` directly (no dedicated typed struct, no `Runtime`, no
+`Networking`), and deliberately expose only counts/flags, never the underlying
+data:
+
+| Resource | Attributes |
+|---|---|
+| ConfigMap | `configmap.data_keys_count` (int), `configmap.immutable` (bool) |
+| Secret | `secret.type` (string, e.g. `"Opaque"`), `secret.data_keys_count` (int), `secret.immutable` (bool) — **never** `.Data`/`.StringData` values |
+| Ingress | `ingress.tls_enabled` (bool), `ingress.rules_count` (int), `ingress.class` (string, `""` if unset) |
+| NetworkPolicy | `networkpolicy.policy_types` ([]string), `networkpolicy.ingress_rules_count`/`egress_rules_count` (int), `networkpolicy.selects_all_pods` (bool — true when `spec.podSelector` is empty, i.e. namespace-wide) |
+
+A Secret's actual key/value data never passes through `mapSecret()` into
+`Resource` at all — there is no code path by which it could reach a report or a
+rule condition. See `providers/kubernetes/normalize_test.go`'s
+`TestMapSecret_NoDataValuesLeakIntoAttributes`.
 
 Anything without a typed field (`seccompProfile`, `seLinuxOptions`, ...) can go into
 `Container.Attributes`/`Resource.Attributes` directly — but note the fields above
@@ -241,6 +263,10 @@ Concurrent, one goroutine per resource type, all sharing the request `ctx`:
 | Job | yes |
 | CronJob | yes |
 | Service | yes (NodePort/LoadBalancer exposure) |
+| ConfigMap | yes (shape only — no data values, see §5) |
+| Secret | yes (shape only — no data values, see §5) |
+| Ingress | yes (Ingress exposure + TLS/class attributes, see §5) |
+| NetworkPolicy | yes (rule-count/selector attributes, see §5) |
 | ReplicaSet | **no** — listed only to resolve the Pod→ReplicaSet→Deployment ownership chain (§4) |
 
 A resource-type list call failing independently (RBAC denies `list jobs`) does not
@@ -280,7 +306,7 @@ open question on per-provider flag sets):
 
 | File | Covers |
 |---|---|
-| `providers/kubernetes/normalize_test.go` | Security context + resource mapping (`TestMapPod_SecurityContextAndResources`), Service NodePort exposure, Owner resolution through the ReplicaSet hop |
+| `providers/kubernetes/normalize_test.go` | Security context + resource mapping (`TestMapPod_SecurityContextAndResources`), Service NodePort exposure, Owner resolution through the ReplicaSet hop, ConfigMap/Secret shape-only mapping (incl. the no-data-leak guarantee), Ingress exposure/attributes, NetworkPolicy rule counts |
 | `providers/kubernetes/discovery_test.go` | Partial-failure tolerance, total-failure error, end-to-end `Discover()` via a fake clientset (pre-dedup resource counts) |
 | `internal/resource/security_test.go`, `networking_test.go` | `Flatten()` output, including the "known type gets explicit false" vs. "unknown type gets implicit true" distinction |
 | `internal/scan/pipeline/enrich_test.go` | `EnrichAttributes` merges correctly and never overwrites a provider-set attribute |

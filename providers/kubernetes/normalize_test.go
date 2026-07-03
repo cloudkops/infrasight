@@ -5,6 +5,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -96,6 +97,104 @@ func TestMapService_NodePortExposure(t *testing.T) {
 	}
 	if !got.Networking.HasExposure("NodePort") {
 		t.Error("expected NodePort exposure")
+	}
+}
+
+func TestMapConfigMap_NoDataValuesLeakIntoAttributes(t *testing.T) {
+	cm := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-config", Namespace: "prod", UID: "cm-1"},
+		Data:       map[string]string{"log_level": "debug"},
+		Immutable:  boolPtr(true),
+	}
+
+	got := mapConfigMap(cm)
+
+	if got.Kind != "configmap" || got.Provider != Name {
+		t.Fatalf("unexpected identity fields: %+v", got)
+	}
+	if got.Attributes["configmap.data_keys_count"] != 1 {
+		t.Errorf("expected data_keys_count=1, got %v", got.Attributes["configmap.data_keys_count"])
+	}
+	if got.Attributes["configmap.immutable"] != true {
+		t.Errorf("expected immutable=true, got %v", got.Attributes["configmap.immutable"])
+	}
+	for k, v := range got.Attributes {
+		if k == "log_level" || v == "debug" {
+			t.Fatalf("configmap data value leaked into attributes: %+v", got.Attributes)
+		}
+	}
+}
+
+func TestMapSecret_NoDataValuesLeakIntoAttributes(t *testing.T) {
+	sec := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-creds", Namespace: "prod", UID: "sec-1"},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"password": []byte("hunter2")},
+	}
+
+	got := mapSecret(sec)
+
+	if got.Kind != "secret" || got.Provider != Name {
+		t.Fatalf("unexpected identity fields: %+v", got)
+	}
+	if got.Attributes["secret.type"] != "Opaque" {
+		t.Errorf("expected secret.type=Opaque, got %v", got.Attributes["secret.type"])
+	}
+	if got.Attributes["secret.data_keys_count"] != 1 {
+		t.Errorf("expected data_keys_count=1, got %v", got.Attributes["secret.data_keys_count"])
+	}
+	for k, v := range got.Attributes {
+		if k == "password" || v == "hunter2" {
+			t.Fatalf("secret data value leaked into attributes: %+v", got.Attributes)
+		}
+	}
+}
+
+func TestMapIngress_ExposureAndAttributes(t *testing.T) {
+	className := "nginx"
+	ing := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "prod", UID: "ing-1"},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &className,
+			Rules:            []networkingv1.IngressRule{{Host: "example.com"}},
+			TLS:              []networkingv1.IngressTLS{{Hosts: []string{"example.com"}}},
+		},
+	}
+
+	got := mapIngress(ing)
+
+	if got.Kind != "ingress" {
+		t.Fatalf("expected kind ingress, got %q", got.Kind)
+	}
+	if !got.Networking.HasExposure("Ingress") {
+		t.Error("expected Ingress exposure")
+	}
+	if got.Attributes["ingress.tls_enabled"] != true {
+		t.Errorf("expected tls_enabled=true, got %v", got.Attributes["ingress.tls_enabled"])
+	}
+	if got.Attributes["ingress.class"] != "nginx" {
+		t.Errorf("expected class=nginx, got %v", got.Attributes["ingress.class"])
+	}
+}
+
+func TestMapNetworkPolicy_SelectsAllPodsAndRuleCounts(t *testing.T) {
+	np := networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-deny", Namespace: "prod", UID: "np-1"},
+		Spec: networkingv1.NetworkPolicySpec{
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+		},
+	}
+
+	got := mapNetworkPolicy(np)
+
+	if got.Kind != "networkpolicy" {
+		t.Fatalf("expected kind networkpolicy, got %q", got.Kind)
+	}
+	if got.Attributes["networkpolicy.selects_all_pods"] != true {
+		t.Errorf("expected selects_all_pods=true, got %v", got.Attributes["networkpolicy.selects_all_pods"])
+	}
+	if got.Attributes["networkpolicy.ingress_rules_count"] != 0 || got.Attributes["networkpolicy.egress_rules_count"] != 0 {
+		t.Errorf("expected zero ingress/egress rules for a default-deny policy, got %+v", got.Attributes)
 	}
 }
 

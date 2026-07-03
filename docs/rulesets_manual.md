@@ -113,7 +113,7 @@ synthetic empty container, so resource-level rules fire correctly for them.
 |---|---|---|
 | `resource.name` | string | |
 | `resource.namespace` | string | |
-| `resource.kind` | string | `pod`, `deployment`, `statefulset`, `daemonset`, `job`, `cronjob`, `service` |
+| `resource.kind` | string | `pod`, `deployment`, `statefulset`, `daemonset`, `job`, `cronjob`, `service`, `configmap`, `secret`, `ingress`, `networkpolicy` |
 | `resource.provider` | string | `kubernetes` today |
 | `resource.labels.<key>` | string | e.g. `resource.labels.team` |
 | `resource.annotations.<key>` | string | e.g. `resource.annotations.example.com/owner` |
@@ -151,6 +151,28 @@ reports is queryable as `networking.<type>` but only supports `equals: true`/
 |---|---|
 | `resource.host_pid` | bool |
 | `resource.host_ipc` | bool |
+
+### ConfigMap / Secret / Ingress / NetworkPolicy fields
+
+These four kinds have no containers — every condition against them runs once,
+against the synthetic empty container (§4's opening note). They also carry no
+`Runtime`, so all their fields live in the resource-level Attributes escape hatch,
+not a typed struct:
+
+| Field | Type | Resource kind |
+|---|---|---|
+| `configmap.data_keys_count` | int | `configmap` |
+| `configmap.immutable` | bool | `configmap` |
+| `secret.type` | string | `secret` — e.g. `"Opaque"`, `"kubernetes.io/tls"` |
+| `secret.data_keys_count` | int | `secret` — a count only; **actual secret data is never queryable, ever** — it's not read into any Resource field |
+| `secret.immutable` | bool | `secret` |
+| `ingress.tls_enabled` | bool | `ingress` |
+| `ingress.rules_count` | int | `ingress` |
+| `ingress.class` | string | `ingress` — `""` if `ingressClassName` is unset |
+| `networking.Ingress` | bool | `ingress` — via `Networking.Flatten`; only supports `equals: true`/`exists: true` (not yet in the well-known exposure list, see the Networking table above) |
+| `networkpolicy.policy_types` | list of strings | `networkpolicy` — e.g. `["Ingress", "Egress"]` |
+| `networkpolicy.ingress_rules_count` / `egress_rules_count` | int | `networkpolicy` |
+| `networkpolicy.selects_all_pods` | bool | `networkpolicy` — true when `spec.podSelector` is empty (namespace-wide); combined with zero ingress rules this is the standard "default deny" shape |
 
 ### Container-level fields
 

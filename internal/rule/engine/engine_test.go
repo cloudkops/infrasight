@@ -68,6 +68,34 @@ func TestEvaluate_NoContainers(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ContainerScopedRuleSkippedForContainerlessResource(t *testing.T) {
+	// A ConfigMap/Secret/Ingress/NetworkPolicy has no Runtime.Containers.
+	// "container.resources.cpu_limit exists: false" must NOT fire for it — the
+	// field is meaningless there, not "missing." A resource-level rule must
+	// still fire via the synthetic empty container.
+	resources := []resource.Resource{
+		{Name: "kube-root-ca.crt", Namespace: "kube-system", Kind: "configmap"},
+	}
+	rules := []parser.Rule{
+		{
+			ID: "ISG-RES-001", Title: "Missing CPU limit", Severity: "MEDIUM",
+			Condition: parser.Condition{Field: "container.resources.cpu_limit"},
+		},
+		{
+			ID: "ISG-GOV-001", Title: "Missing team label", Severity: "LOW",
+			Condition: parser.Condition{Field: "resource.labels.team"},
+		},
+	}
+
+	findings := Evaluate(resources, rules)
+	if len(findings) != 1 {
+		t.Fatalf("expected only the resource-level rule to fire, got %d findings: %+v", len(findings), findings)
+	}
+	if findings[0].RuleID != "ISG-GOV-001" {
+		t.Errorf("expected ISG-GOV-001 to fire, got %q", findings[0].RuleID)
+	}
+}
+
 func TestEvaluate_AnyOf(t *testing.T) {
 	// Networking fields are resolved via Attributes, populated in production by
 	// internal/scan/pipeline.EnrichAttributes (not by Evaluate itself) — flatten
