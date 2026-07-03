@@ -22,3 +22,4 @@ go.work
 
 # Dependency directories (go.sum should be committed)
 vendor/
+temp_doc/*.md
