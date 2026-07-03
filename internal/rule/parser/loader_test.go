@@ -22,7 +22,7 @@ func TestLoadRuleset_AllKubernetesProfiles(t *testing.T) {
 	}{
 		{"../../../rulesets/security-baseline", 11},
 		{"../../../rulesets/dev-baseline", 6},
-		{"../../../rulesets/strict-runtime", 11},
+		{"../../../rulesets/strict-runtime", 19},
 		{"../../../rulesets/ci-critical", 2},
 	}
 

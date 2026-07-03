@@ -130,6 +130,24 @@ func TestMatch_NewOperators(t *testing.T) {
 	}
 }
 
+func TestMatch_ContainsOnStringSlice(t *testing.T) {
+	// container.security.capabilities_add is exposed as a []string via
+	// SecurityContext.Flatten (through EnrichAttributes in production) — contains
+	// must work as membership here, not substring-of-a-string.
+	c := resource.Container{
+		Security: resource.SecurityContext{CapabilitiesAdd: []string{"NET_ADMIN", "SYS_TIME"}},
+	}
+	c.Attributes = c.Security.Flatten("container.security")
+	r := resource.Resource{}
+
+	if !Match(r, c, parser.Condition{Field: "container.security.capabilities_add", Contains: "NET_ADMIN"}) {
+		t.Error("expected contains to match a capability present in the slice")
+	}
+	if Match(r, c, parser.Condition{Field: "container.security.capabilities_add", Contains: "SYS_ADMIN"}) {
+		t.Error("expected contains to not match a capability absent from the slice")
+	}
+}
+
 func TestOperatorNameFor_Precedence(t *testing.T) {
 	// contains wins over equals when both are set on one condition (documented
 	// pitfall in docs/rulesets_manual.md — not_equals/not_in/not_contains/in still

@@ -48,8 +48,11 @@ providers/kubernetes.Provider.Discover(ctx, opts)
         │      shared ctx, partial-failure tolerant:
         │        Pods · ReplicaSets · Deployments · StatefulSets · DaemonSets ·
         │        Jobs · CronJobs · Services · ConfigMaps · Secrets · Ingresses ·
-        │        NetworkPolicies   (12 fetches; ReplicaSets never returned
-        │                                      as a resource, see §4)
+        │        NetworkPolicies · ClusterRoleBindings · RoleBindings
+        │                                      (14 fetches; ReplicaSets never
+        │                                       returned as a resource, see §4)
+        │      ClusterRoleBindings are cluster-scoped — fetched regardless of
+        │      the requested --namespace/-A, unlike every other type here.
         │      A single resource type failing (e.g. RBAC forbids `list jobs`) is
         │      collected into rawObjects.warnings; only every type failing aborts.
         │
@@ -170,10 +173,30 @@ container: `Privileged`/`RunAsRoot` are true if *any* container is.
 
 Pod-level (not per-container) signals go straight into `Resource.Attributes` under
 the *exact* dotted key a rule would use — `podLevelAttributes()` sets
-`"resource.host_pid"` and `"resource.host_ipc"` directly, so they're queryable
-through the plain `Attributes` fallback with no dedicated evaluator case at all.
-`hostNetwork` is **not** duplicated here — it's covered by `Resource.Networking`
-(below) via `EnrichAttributes` (§6) instead.
+`"resource.host_pid"`, `"resource.host_ipc"`, `"resource.host_path_volume"`
+(true if any `spec.volumes[]` has a non-nil `hostPath`), and
+`"resource.service_account_token_automount"` (see the caveat below) directly, so
+they're queryable through the plain `Attributes` fallback with no dedicated
+evaluator case at all. `hostNetwork` is **not** duplicated here — it's covered by
+`Resource.Networking` (below) via `EnrichAttributes` (§6) instead.
+
+**`resource.service_account_token_automount` is a documented approximation.** It
+reflects only `pod.Spec.AutomountServiceAccountToken` (default `true` if unset,
+matching the Pod's own runtime default) — a Kubernetes ServiceAccount object can
+independently default this to `false` too, and this provider doesn't discover or
+normalize ServiceAccounts today, so that half of the effective calculation isn't
+accounted for. This matches how most Kubernetes security scanners approximate the
+check, but isn't a complete accounting.
+
+Per-container signals beyond `SecurityContext`, set directly in `mapContainer()`
+(always present as `true`/`false`, never omitted, so `equals: false` works without
+an `exists` check first):
+
+| Field | True when |
+|---|---|
+| `container.probes.readiness_configured` | `container.readinessProbe` is set |
+| `container.probes.liveness_configured` | `container.livenessProbe` is set |
+| `container.secret_env_vars` | any `env[].valueFrom.secretKeyRef` or `envFrom[].secretRef` is set — never the Secret's actual value, just that a reference exists |
 
 Exposure maps into `Resource.Networking.Exposures`, a resource-level list (not
 per-container) shared conceptually with every other provider:
@@ -199,11 +222,20 @@ data:
 | Secret | `secret.type` (string, e.g. `"Opaque"`), `secret.data_keys_count` (int), `secret.immutable` (bool) — **never** `.Data`/`.StringData` values |
 | Ingress | `ingress.tls_enabled` (bool), `ingress.rules_count` (int), `ingress.class` (string, `""` if unset) |
 | NetworkPolicy | `networkpolicy.policy_types` ([]string), `networkpolicy.ingress_rules_count`/`egress_rules_count` (int), `networkpolicy.selects_all_pods` (bool — true when `spec.podSelector` is empty, i.e. namespace-wide) |
+| ClusterRoleBinding / RoleBinding | `rbac.role_ref_kind` (string), `rbac.role_ref_name` (string), `rbac.binds_cluster_admin` (bool), `rbac.subjects_count` (int) |
 
 A Secret's actual key/value data never passes through `mapSecret()` into
 `Resource` at all — there is no code path by which it could reach a report or a
 rule condition. See `providers/kubernetes/normalize_test.go`'s
 `TestMapSecret_NoDataValuesLeakIntoAttributes`.
+
+**`rbac.binds_cluster_admin`** is `true` only when `roleRef.kind == "ClusterRole"`
+and `roleRef.name == "cluster-admin"` — the built-in ClusterRole every stock
+cluster ships with. This provider does **not** evaluate a custom ClusterRole's
+actual rules to detect an equivalent-but-differently-named admin role, and does
+**not** resolve which Pods use the bound ServiceAccount — a ClusterRoleBinding/
+RoleBinding is surfaced as its own finding, not linked to the workloads that might
+be affected by it. See `docs/dev_manual.md` §9.
 
 Anything without a typed field (`seccompProfile`, `seLinuxOptions`, ...) can go into
 `Container.Attributes`/`Resource.Attributes` directly — but note the fields above
@@ -267,6 +299,8 @@ Concurrent, one goroutine per resource type, all sharing the request `ctx`:
 | Secret | yes (shape only — no data values, see §5) |
 | Ingress | yes (Ingress exposure + TLS/class attributes, see §5) |
 | NetworkPolicy | yes (rule-count/selector attributes, see §5) |
+| ClusterRoleBinding | yes (cluster-scoped — fetched regardless of `--namespace`, see §5) |
+| RoleBinding | yes (namespaced, see §5) |
 | ReplicaSet | **no** — listed only to resolve the Pod→ReplicaSet→Deployment ownership chain (§4) |
 
 A resource-type list call failing independently (RBAC denies `list jobs`) does not
@@ -306,7 +340,7 @@ open question on per-provider flag sets):
 
 | File | Covers |
 |---|---|
-| `providers/kubernetes/normalize_test.go` | Security context + resource mapping (`TestMapPod_SecurityContextAndResources`), Service NodePort exposure, Owner resolution through the ReplicaSet hop, ConfigMap/Secret shape-only mapping (incl. the no-data-leak guarantee), Ingress exposure/attributes, NetworkPolicy rule counts |
+| `providers/kubernetes/normalize_test.go` | Security context + resource mapping (`TestMapPod_SecurityContextAndResources`), Service NodePort exposure, Owner resolution through the ReplicaSet hop, ConfigMap/Secret shape-only mapping (incl. the no-data-leak guarantee), Ingress exposure/attributes, NetworkPolicy rule counts, probes/hostPath/automount/secret-env-var attributes, ClusterRoleBinding/RoleBinding cluster-admin detection |
 | `providers/kubernetes/discovery_test.go` | Partial-failure tolerance, total-failure error, end-to-end `Discover()` via a fake clientset (pre-dedup resource counts) |
 | `internal/resource/security_test.go`, `networking_test.go` | `Flatten()` output, including the "known type gets explicit false" vs. "unknown type gets implicit true" distinction |
 | `internal/scan/pipeline/enrich_test.go` | `EnrichAttributes` merges correctly and never overwrites a provider-set attribute |

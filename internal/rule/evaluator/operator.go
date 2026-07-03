@@ -3,6 +3,7 @@ package evaluator
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,8 +47,16 @@ type containsOperator struct{}
 
 func (containsOperator) Name() string { return "contains" }
 func (containsOperator) Match(actual any, cond parser.Condition) bool {
-	s, ok := asString(actual)
-	return ok && strings.Contains(s, cond.Contains)
+	if s, ok := asString(actual); ok {
+		return strings.Contains(s, cond.Contains)
+	}
+	// A []string field (e.g. container.security.capabilities_add) makes
+	// "contains" a membership check instead of a substring check — this is what
+	// lets a rule ask "was this capability added" without a dedicated operator.
+	if items, ok := asStringSlice(actual); ok {
+		return slices.Contains(items, cond.Contains)
+	}
+	return false
 }
 
 type existsOperator struct{}
@@ -217,6 +226,26 @@ func asComparable(v any) (string, bool) {
 func asString(v any) (string, bool) {
 	s, ok := v.(string)
 	return s, ok
+}
+
+// asStringSlice normalizes []string (the typed representation, e.g.
+// SecurityContext.Flatten's capabilities_add/drop) and []interface{} (what YAML
+// list values decode as) into a plain []string for membership checks.
+func asStringSlice(v any) ([]string, bool) {
+	switch t := v.(type) {
+	case []string:
+		return t, true
+	case []interface{}:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 // asFloat64 normalizes ints/floats, and numeric-looking strings, into a plain

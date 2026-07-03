@@ -9,6 +9,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -18,19 +19,21 @@ import (
 // Pod->ReplicaSet->Deployment ownership chain (see normalize.go) — they are never
 // themselves returned as a scanned resource.
 type rawObjects struct {
-	pods            []corev1.Pod
-	replicaSets     []appsv1.ReplicaSet
-	deployments     []appsv1.Deployment
-	statefulSets    []appsv1.StatefulSet
-	daemonSets      []appsv1.DaemonSet
-	jobs            []batchv1.Job
-	cronJobs        []batchv1.CronJob
-	services        []corev1.Service
-	configMaps      []corev1.ConfigMap
-	secrets         []corev1.Secret
-	ingresses       []networkingv1.Ingress
-	networkPolicies []networkingv1.NetworkPolicy
-	warnings        []string
+	pods                []corev1.Pod
+	replicaSets         []appsv1.ReplicaSet
+	deployments         []appsv1.Deployment
+	statefulSets        []appsv1.StatefulSet
+	daemonSets          []appsv1.DaemonSet
+	jobs                []batchv1.Job
+	cronJobs            []batchv1.CronJob
+	services            []corev1.Service
+	configMaps          []corev1.ConfigMap
+	secrets             []corev1.Secret
+	ingresses           []networkingv1.Ingress
+	networkPolicies     []networkingv1.NetworkPolicy
+	clusterRoleBindings []rbacv1.ClusterRoleBinding
+	roleBindings        []rbacv1.RoleBinding
+	warnings            []string
 }
 
 // discoverAll fans out one goroutine per resource type. A single resource type
@@ -185,6 +188,30 @@ func discoverAll(ctx context.Context, client kubernetes.Interface, namespace, la
 		}
 		mu.Lock()
 		raw.networkPolicies = list.Items
+		mu.Unlock()
+		return nil
+	})
+
+	// ClusterRoleBindings are cluster-scoped — never filtered by namespace, unlike
+	// every other fetch above/below.
+	fetch("clusterrolebindings", func() error {
+		list, err := client.RbacV1().ClusterRoleBindings().List(ctx, listOpts)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		raw.clusterRoleBindings = list.Items
+		mu.Unlock()
+		return nil
+	})
+
+	fetch("rolebindings", func() error {
+		list, err := client.RbacV1().RoleBindings(namespace).List(ctx, listOpts)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		raw.roleBindings = list.Items
 		mu.Unlock()
 		return nil
 	})

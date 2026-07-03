@@ -8,9 +8,16 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+// clusterAdminRoleName is the built-in ClusterRole every stock Kubernetes cluster
+// ships with, granting unrestricted access. A binding referencing it grants
+// cluster-admin-equivalent access directly, without needing this provider to
+// evaluate a custom ClusterRole's actual rules.
+const clusterAdminRoleName = "cluster-admin"
 
 // NormalizeAll maps every raw native object into resource.Resource. Pod owner
 // references pointing at a ReplicaSet are resolved one hop further to that
@@ -66,6 +73,12 @@ func NormalizeAll(raw *rawObjects) []resource.Resource {
 	}
 	for _, np := range raw.networkPolicies {
 		resources = append(resources, mapNetworkPolicy(np))
+	}
+	for _, crb := range raw.clusterRoleBindings {
+		resources = append(resources, mapClusterRoleBinding(crb))
+	}
+	for _, rb := range raw.roleBindings {
+		resources = append(resources, mapRoleBinding(rb))
 	}
 	return resources
 }
@@ -284,6 +297,49 @@ func mapNetworkPolicy(np networkingv1.NetworkPolicy) resource.Resource {
 	}
 }
 
+// mapClusterRoleBinding and mapRoleBinding both expose the same
+// "rbac.binds_cluster_admin" attribute so a single rule flags either kind — a
+// ClusterRoleBinding grants it cluster-wide, a RoleBinding referencing the
+// cluster-admin ClusterRole grants it only within the RoleBinding's own
+// namespace, but both are "this subject has cluster-admin-equivalent access"
+// findings from a security-review standpoint.
+func mapClusterRoleBinding(crb rbacv1.ClusterRoleBinding) resource.Resource {
+	return resource.Resource{
+		ID:       resourceID("clusterrolebinding", crb.UID, "", crb.Name),
+		Name:     crb.Name,
+		Kind:     "clusterrolebinding",
+		Provider: Name,
+		Metadata: mapMetadata(crb.Labels, crb.Annotations),
+		Attributes: map[string]any{
+			"rbac.role_ref_kind":       crb.RoleRef.Kind,
+			"rbac.role_ref_name":       crb.RoleRef.Name,
+			"rbac.binds_cluster_admin": bindsClusterAdmin(crb.RoleRef),
+			"rbac.subjects_count":      len(crb.Subjects),
+		},
+	}
+}
+
+func mapRoleBinding(rb rbacv1.RoleBinding) resource.Resource {
+	return resource.Resource{
+		ID:        resourceID("rolebinding", rb.UID, rb.Namespace, rb.Name),
+		Name:      rb.Name,
+		Namespace: rb.Namespace,
+		Kind:      "rolebinding",
+		Provider:  Name,
+		Metadata:  mapMetadata(rb.Labels, rb.Annotations),
+		Attributes: map[string]any{
+			"rbac.role_ref_kind":       rb.RoleRef.Kind,
+			"rbac.role_ref_name":       rb.RoleRef.Name,
+			"rbac.binds_cluster_admin": bindsClusterAdmin(rb.RoleRef),
+			"rbac.subjects_count":      len(rb.Subjects),
+		},
+	}
+}
+
+func bindsClusterAdmin(ref rbacv1.RoleRef) bool {
+	return ref.Kind == "ClusterRole" && ref.Name == clusterAdminRoleName
+}
+
 // mapPodSpec maps regular, init, and ephemeral containers into resource.Runtime.
 // Init/ephemeral containers are tagged via Attributes["container_kind"] so rules
 // can still distinguish them without a dedicated field.
@@ -332,9 +388,13 @@ func mapContainer(c corev1.Container, kindAttr string) resource.Container {
 		}
 	}
 
-	var attrs map[string]any
+	attrs := map[string]any{
+		"container.probes.readiness_configured": c.ReadinessProbe != nil,
+		"container.probes.liveness_configured":  c.LivenessProbe != nil,
+		"container.secret_env_vars":             hasSecretEnvVars(c),
+	}
 	if kindAttr != "" {
-		attrs = map[string]any{"container_kind": kindAttr}
+		attrs["container_kind"] = kindAttr
 	}
 
 	return resource.Container{
@@ -346,6 +406,24 @@ func mapContainer(c corev1.Container, kindAttr string) resource.Container {
 		Security:   sec,
 		Attributes: attrs,
 	}
+}
+
+// hasSecretEnvVars reports whether the container pulls any Secret data into an
+// environment variable — either a single key (env[].valueFrom.secretKeyRef) or an
+// entire Secret (envFrom[].secretRef). It only checks for the presence of the
+// reference, never resolves or carries the referenced Secret's actual data.
+func hasSecretEnvVars(c corev1.Container) bool {
+	for _, e := range c.Env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+			return true
+		}
+	}
+	for _, ef := range c.EnvFrom {
+		if ef.SecretRef != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func mapLimits(r corev1.ResourceRequirements) resource.Limits {
@@ -412,9 +490,33 @@ func mapServiceNetworking(svc corev1.Service) resource.Networking {
 // Networking.Flatten via EnrichAttributes, so it isn't duplicated here.
 func podLevelAttributes(spec corev1.PodSpec) map[string]any {
 	return map[string]any{
-		"resource.host_pid": spec.HostPID,
-		"resource.host_ipc": spec.HostIPC,
+		"resource.host_pid":                        spec.HostPID,
+		"resource.host_ipc":                        spec.HostIPC,
+		"resource.host_path_volume":                hasHostPathVolume(spec),
+		"resource.service_account_token_automount": automountsServiceAccountToken(spec),
 	}
+}
+
+func hasHostPathVolume(spec corev1.PodSpec) bool {
+	for _, v := range spec.Volumes {
+		if v.HostPath != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// automountsServiceAccountToken reflects only the Pod spec's own setting — a
+// Kubernetes ServiceAccount can independently default this to false too, which
+// this provider does not check (ServiceAccounts aren't discovered/normalized
+// today). Defaulting to true when unset matches the Pod spec's actual runtime
+// default and the convention most Kubernetes security scanners use, but this is a
+// documented approximation, not a full accounting of the effective value.
+func automountsServiceAccountToken(spec corev1.PodSpec) bool {
+	if spec.AutomountServiceAccountToken == nil {
+		return true
+	}
+	return *spec.AutomountServiceAccountToken
 }
 
 func mapMetadata(labels, annotations map[string]string) resource.Metadata {

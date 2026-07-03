@@ -40,12 +40,14 @@
   title: "Writable root filesystem"
   severity: "MEDIUM"
   category: "security"
-  description: "Container does not set readOnlyRootFilesystem: true, allowing runtime tampering with its own filesystem."
+  description: "Container does not set readOnlyRootFilesystem: true, allowing runtime tampering with its own filesystem. This covers both an explicit readOnlyRootFilesystem: false and simply never setting the field (which defaults to writable) — a single equals: false condition would only catch the first."
   remediation: "Set securityContext.readOnlyRootFilesystem: true and mount an emptyDir for any paths that must be writable."
   provider: "kubernetes"
-  condition:
-    field: "container.security.read_only_root_filesystem"
-    equals: false
+  any_of:
+    - field: "container.security.read_only_root_filesystem"
+      exists: false
+    - field: "container.security.read_only_root_filesystem"
+      equals: false
 
 - id: "ISG-STR-005"
   title: "Host network enabled"
@@ -125,3 +127,111 @@
   condition:
     field: "resource.labels.team"
     exists: false
+
+- id: "ISG-STR-012"
+  title: "Unpinned or floating image tag"
+  severity: "HIGH"
+  category: "security"
+  description: "Container image resolves to :latest (explicitly or by omitting a tag entirely), so the exact code running is not reproducible and can change without a deploy."
+  remediation: "Pin the image to an immutable tag or digest (e.g. app:1.4.2 or app@sha256:...)."
+  provider: "kubernetes"
+  any_of:
+    - field: "container.image"
+      ends_with: ":latest"
+    - field: "container.image"
+      regex: "^[^:@]+$"
+
+- id: "ISG-STR-013"
+  title: "Missing readiness probe"
+  severity: "MEDIUM"
+  category: "reliability"
+  description: "Container has no readinessProbe, so Kubernetes cannot tell when it's actually ready to receive traffic — it may receive requests before it's able to serve them."
+  remediation: "Add a readinessProbe (httpGet/tcpSocket/exec/grpc)."
+  provider: "kubernetes"
+  condition:
+    field: "container.probes.readiness_configured"
+    equals: false
+
+- id: "ISG-STR-014"
+  title: "Missing liveness probe"
+  severity: "MEDIUM"
+  category: "reliability"
+  description: "Container has no livenessProbe, so Kubernetes cannot detect and restart it if it hangs or deadlocks."
+  remediation: "Add a livenessProbe (httpGet/tcpSocket/exec/grpc)."
+  provider: "kubernetes"
+  condition:
+    field: "container.probes.liveness_configured"
+    equals: false
+
+- id: "ISG-STR-015"
+  title: "ServiceAccount token auto-mounted"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Pod does not set automountServiceAccountToken: false, so its ServiceAccount's API token is mounted into every container even if the workload never calls the Kubernetes API."
+  remediation: "Set automountServiceAccountToken: false on the Pod (or its ServiceAccount) unless the workload genuinely needs API access."
+  provider: "kubernetes"
+  condition:
+    field: "resource.service_account_token_automount"
+    equals: true
+
+- id: "ISG-STR-016"
+  title: "Dangerous Linux capability added"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container adds a Linux capability commonly usable to escape container isolation or take over the host (SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, SYS_MODULE, SYS_BOOT, DAC_READ_SEARCH, MAC_ADMIN, MAC_OVERRIDE, ALL)."
+  remediation: "Drop the capability; grant only what the workload specifically requires (usually none of these)."
+  provider: "kubernetes"
+  any_of:
+    - field: "container.security.capabilities_add"
+      contains: "ALL"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "NET_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "NET_RAW"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_PTRACE"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_MODULE"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_BOOT"
+    - field: "container.security.capabilities_add"
+      contains: "DAC_READ_SEARCH"
+    - field: "container.security.capabilities_add"
+      contains: "MAC_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "MAC_OVERRIDE"
+
+- id: "ISG-STR-017"
+  title: "hostPath volume mounted"
+  severity: "HIGH"
+  category: "security"
+  description: "Pod mounts a hostPath volume, giving it direct access to the node's filesystem — a common container-escape vector."
+  remediation: "Use a PersistentVolumeClaim, emptyDir, or a projected/configMap/secret volume instead of hostPath."
+  provider: "kubernetes"
+  condition:
+    field: "resource.host_path_volume"
+    equals: true
+
+- id: "ISG-STR-018"
+  title: "Secret mounted as an environment variable"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container exposes Secret data via an environment variable (env[].valueFrom.secretKeyRef or envFrom[].secretRef). Environment variables are easily leaked via logs, crash dumps, child-process inheritance, and /proc — a mounted volume is the safer delivery method."
+  remediation: "Mount the Secret as a volume instead of injecting it into the environment."
+  provider: "kubernetes"
+  condition:
+    field: "container.secret_env_vars"
+    equals: true
+
+- id: "ISG-STR-019"
+  title: "cluster-admin binding"
+  severity: "CRITICAL"
+  category: "security"
+  description: "A ClusterRoleBinding or RoleBinding grants the built-in cluster-admin ClusterRole — unrestricted access cluster-wide (ClusterRoleBinding) or within the binding's namespace (RoleBinding). Almost never required by a workload ServiceAccount."
+  remediation: "Bind a narrowly-scoped Role/ClusterRole instead; reserve cluster-admin for human break-glass access, not workload identities."
+  provider: "kubernetes"
+  condition:
+    field: "rbac.binds_cluster_admin"
+    equals: true

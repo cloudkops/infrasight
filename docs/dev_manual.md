@@ -383,6 +383,15 @@ gofmt -l .          # should print nothing
   `less_than_or_equal`) parse plain numbers only, not Kubernetes resource
   quantities (`"500m"`, `"2Gi"`) — see `rulesets_manual.md` §3. Quantity-aware
   parsing is still on the backlog (`scope.md`).
+- ClusterRoleBinding/RoleBinding findings aren't linked to the Pods/ServiceAccounts
+  they affect — `rbac.binds_cluster_admin` (`k8s.md` §5, `rulesets_manual.md` §4)
+  flags the binding itself as its own resource, but this provider doesn't discover
+  ServiceAccounts or resolve "which running Pods use a ServiceAccount bound to
+  cluster-admin." It also only recognizes the literal built-in `cluster-admin`
+  ClusterRole, not a custom role with equivalent permissions.
+- `resource.service_account_token_automount` only reflects the Pod spec's own
+  `automountServiceAccountToken` setting, not the ServiceAccount object's (which
+  isn't discovered/normalized) — see `k8s.md` §5.
 - Per-provider flag sets aren't separated — every `scan <provider>` subcommand
   currently binds the same flag set (including Kubernetes-only ones like
   `--kubeconfig`), since only one provider exists. This needs revisiting once a

@@ -31,7 +31,7 @@ Current profiles, all Kubernetes today:
 |---|---|---|
 | `security-baseline` | 11 | Standard first gate — root, privileged, hostNetwork, NodePort, missing resource limits/requests, missing governance labels |
 | `dev-baseline` | 6 | Same risk categories as security-baseline, reduced severities, so local/dev clusters don't fail CI over things that matter more in prod |
-| `strict-runtime` | 11 | Production hardening — everything in security-baseline at its highest severity, plus privilege escalation, read-only root filesystem, host PID/IPC namespaces |
+| `strict-runtime` | 19 | Production hardening — everything in security-baseline at its highest severity, plus privilege escalation, read-only root filesystem, host PID/IPC/hostPath, floating image tags, missing probes, ServiceAccount token automount, dangerous capabilities, secrets-as-env-vars, and cluster-admin RBAC bindings |
 | `ci-critical` | 2 | Minimal CRITICAL-only gate for a fast CI check |
 
 ---
@@ -144,7 +144,7 @@ synthetic empty container, so resource-level rules fire correctly for them.
 |---|---|---|
 | `resource.name` | string | |
 | `resource.namespace` | string | |
-| `resource.kind` | string | `pod`, `deployment`, `statefulset`, `daemonset`, `job`, `cronjob`, `service`, `configmap`, `secret`, `ingress`, `networkpolicy` |
+| `resource.kind` | string | `pod`, `deployment`, `statefulset`, `daemonset`, `job`, `cronjob`, `service`, `configmap`, `secret`, `ingress`, `networkpolicy`, `clusterrolebinding`, `rolebinding` |
 | `resource.provider` | string | `kubernetes` today |
 | `resource.labels.<key>` | string | e.g. `resource.labels.team` |
 | `resource.annotations.<key>` | string | e.g. `resource.annotations.example.com/owner` |
@@ -182,6 +182,24 @@ reports is queryable as `networking.<type>` but only supports `equals: true`/
 |---|---|
 | `resource.host_pid` | bool |
 | `resource.host_ipc` | bool |
+| `resource.host_path_volume` | bool — true if any `spec.volumes[]` has a `hostPath` source |
+| `resource.service_account_token_automount` | bool — see the caveat in `k8s.md` §5: reflects only the Pod spec's own setting, not the ServiceAccount's |
+
+### RBAC fields (ClusterRoleBinding / RoleBinding)
+
+Like ConfigMap/Secret/Ingress/NetworkPolicy, these two kinds have no containers
+and no typed struct — every field lives in the Attributes escape hatch:
+
+| Field | Type | Resource kind |
+|---|---|---|
+| `rbac.role_ref_kind` | string | both — `"ClusterRole"` or `"Role"` |
+| `rbac.role_ref_name` | string | both |
+| `rbac.binds_cluster_admin` | bool | both — true only for the literal built-in `cluster-admin` ClusterRole, not a custom role with equivalent permissions |
+| `rbac.subjects_count` | int | both |
+
+`clusterrolebinding` resources have no `Namespace` (cluster-scoped); `rolebinding`
+resources are namespaced like everything else. Neither kind is linked to the
+Pods/ServiceAccounts it might affect — see `dev_manual.md` §9.
 
 ### ConfigMap / Secret / Ingress / NetworkPolicy fields
 
@@ -213,7 +231,7 @@ not a typed struct:
 | `container.image` | string |
 | `container.user` | int | the container's `runAsUser`; `0` means root |
 | `container.privileged` | bool |
-| `container.resources.cpu_limit` | string | e.g. `"500m"` — use `exists: false`/`true`, not numeric comparison (no `greater_than` yet) |
+| `container.resources.cpu_limit` | string | e.g. `"500m"` — use `exists: false`/`true`, not numeric comparison (§3's numeric caveat — `greater_than` etc. don't understand the quantity suffix) |
 | `container.resources.cpu_request` | string | |
 | `container.resources.memory_limit` | string | |
 | `container.resources.memory_request` | string | |
@@ -222,8 +240,19 @@ not a typed struct:
 | `container.security.public` | bool | |
 | `container.security.allow_privilege_escalation` | bool | present only if the container sets `allowPrivilegeEscalation` |
 | `container.security.read_only_root_filesystem` | bool | present only if the container sets `readOnlyRootFilesystem` |
-| `container.security.capabilities_add` / `capabilities_drop` | list of strings | present only if non-empty |
+| `container.security.capabilities_add` / `capabilities_drop` | list of strings | present only if non-empty — `contains` on this field checks **list membership**, not substring (see the note below) |
+| `container.probes.readiness_configured` | bool | always present — true if `readinessProbe` is set |
+| `container.probes.liveness_configured` | bool | always present — true if `livenessProbe` is set |
+| `container.secret_env_vars` | bool | always present — true if any `env[].valueFrom.secretKeyRef` or `envFrom[].secretRef` is set |
 | `container_kind` | string (via `exists`/`equals`) | `"init"` or `"ephemeral"` for those container types; absent (not the empty string) for regular containers |
+
+**`contains` on a list field is membership, not substring.** Every other field
+above is a string, where `contains` checks a substring. `capabilities_add`/
+`capabilities_drop` resolve to a `[]string`, and `contains` special-cases that:
+`{field: "container.security.capabilities_add", contains: "SYS_ADMIN"}` matches if
+`"SYS_ADMIN"` is one of the list's exact entries, not a substring match against
+some concatenated string. See `strict-runtime`'s `ISG-STR-016` for a worked
+example (one `any_of` entry per dangerous capability).
 
 ### Escape hatch
 

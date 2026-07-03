@@ -6,6 +6,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -195,6 +196,111 @@ func TestMapNetworkPolicy_SelectsAllPodsAndRuleCounts(t *testing.T) {
 	}
 	if got.Attributes["networkpolicy.ingress_rules_count"] != 0 || got.Attributes["networkpolicy.egress_rules_count"] != 0 {
 		t.Errorf("expected zero ingress/egress rules for a default-deny policy, got %+v", got.Attributes)
+	}
+}
+
+func TestMapPod_ProbesHostPathAutomountAndSecretEnv(t *testing.T) {
+	falseVal := false
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "prod", UID: "pod-1"},
+		Spec: corev1.PodSpec{
+			AutomountServiceAccountToken: &falseVal,
+			Volumes: []corev1.Volume{
+				{Name: "data", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib"}}},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Env: []corev1.EnvVar{
+						{Name: "DB_PASSWORD", ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{Key: "password"},
+						}},
+					},
+					// No ReadinessProbe/LivenessProbe set.
+				},
+			},
+		},
+	}
+
+	got := mapPod(pod, func(string, []metav1.OwnerReference) *infraresource.Owner { return nil })
+
+	if got.Attributes["resource.host_path_volume"] != true {
+		t.Errorf("expected host_path_volume=true, got %v", got.Attributes["resource.host_path_volume"])
+	}
+	if got.Attributes["resource.service_account_token_automount"] != false {
+		t.Errorf("expected service_account_token_automount=false, got %v", got.Attributes["resource.service_account_token_automount"])
+	}
+
+	c := got.Runtime.Containers[0]
+	if c.Attributes["container.probes.readiness_configured"] != false {
+		t.Errorf("expected readiness_configured=false, got %v", c.Attributes["container.probes.readiness_configured"])
+	}
+	if c.Attributes["container.probes.liveness_configured"] != false {
+		t.Errorf("expected liveness_configured=false, got %v", c.Attributes["container.probes.liveness_configured"])
+	}
+	if c.Attributes["container.secret_env_vars"] != true {
+		t.Errorf("expected secret_env_vars=true, got %v", c.Attributes["container.secret_env_vars"])
+	}
+}
+
+func TestMapPod_AutomountDefaultsTrueWhenUnset(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "prod", UID: "pod-1"},
+	}
+	got := mapPod(pod, func(string, []metav1.OwnerReference) *infraresource.Owner { return nil })
+	if got.Attributes["resource.service_account_token_automount"] != true {
+		t.Errorf("expected automount to default true when unset, got %v", got.Attributes["resource.service_account_token_automount"])
+	}
+	if got.Attributes["resource.host_path_volume"] != false {
+		t.Errorf("expected host_path_volume=false with no volumes, got %v", got.Attributes["resource.host_path_volume"])
+	}
+}
+
+func TestMapClusterRoleBinding_DetectsClusterAdmin(t *testing.T) {
+	crb := rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "dangerous-binding", UID: "crb-1"},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "cluster-admin"},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "default", Namespace: "prod"}},
+	}
+
+	got := mapClusterRoleBinding(crb)
+
+	if got.Kind != "clusterrolebinding" {
+		t.Fatalf("expected kind clusterrolebinding, got %q", got.Kind)
+	}
+	if got.Attributes["rbac.binds_cluster_admin"] != true {
+		t.Errorf("expected binds_cluster_admin=true, got %v", got.Attributes["rbac.binds_cluster_admin"])
+	}
+	if got.Attributes["rbac.subjects_count"] != 1 {
+		t.Errorf("expected subjects_count=1, got %v", got.Attributes["rbac.subjects_count"])
+	}
+}
+
+func TestMapClusterRoleBinding_NonAdminRoleNotFlagged(t *testing.T) {
+	crb := rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "view-binding", UID: "crb-2"},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "view"},
+	}
+
+	got := mapClusterRoleBinding(crb)
+	if got.Attributes["rbac.binds_cluster_admin"] != false {
+		t.Errorf("expected binds_cluster_admin=false for the view role, got %v", got.Attributes["rbac.binds_cluster_admin"])
+	}
+}
+
+func TestMapRoleBinding_DetectsClusterAdminClusterRole(t *testing.T) {
+	rb := rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns-admin-binding", Namespace: "prod", UID: "rb-1"},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "cluster-admin"},
+	}
+
+	got := mapRoleBinding(rb)
+
+	if got.Kind != "rolebinding" || got.Namespace != "prod" {
+		t.Fatalf("unexpected identity fields: %+v", got)
+	}
+	if got.Attributes["rbac.binds_cluster_admin"] != true {
+		t.Errorf("expected binds_cluster_admin=true, got %v", got.Attributes["rbac.binds_cluster_admin"])
 	}
 }
 
