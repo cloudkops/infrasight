@@ -1,0 +1,145 @@
+# Host security baseline — flags common systemd-service hardening gaps and
+# unmanaged network-exposed processes on a Linux host. All fields are
+# resource.*/resource.security.*/systemd.*/process.* — never container.* — since
+# a systemd unit or a bare process has no nested-container concept (see
+# docs/host.md). resource.security.run_as_root applies identically to
+# systemd_unit and process resources, so one rule covers both kinds.
+
+- id: "ISG-HOST-001"
+  title: "Service or process running as root"
+  severity: "HIGH"
+  category: "security"
+  description: "The systemd unit's User= is unset/root, or an unmanaged listening process's effective UID is 0."
+  remediation: "Set User= to a non-root account in the unit file, or run the process as a dedicated non-root user."
+  provider: "host"
+  condition:
+    field: "resource.security.run_as_root"
+    equals: true
+
+- id: "ISG-HOST-002"
+  title: "Privilege escalation not restricted"
+  severity: "MEDIUM"
+  category: "security"
+  description: "The unit does not set NoNewPrivileges=yes, so the service (or any child it execs) can gain new privileges via setuid/setgid/file capabilities."
+  remediation: "Set NoNewPrivileges=yes in the unit file unless the service specifically needs to exec a setuid binary."
+  provider: "host"
+  condition:
+    field: "resource.security.allow_privilege_escalation"
+    equals: true
+
+- id: "ISG-HOST-003"
+  title: "Root filesystem not strictly protected"
+  severity: "MEDIUM"
+  category: "security"
+  description: "ProtectSystem is not set to strict, so the service can write outside the paths it actually needs."
+  remediation: "Set ProtectSystem=strict and add ReadWritePaths= for the specific directories the service must write to."
+  provider: "host"
+  condition:
+    field: "resource.security.read_only_root_filesystem"
+    equals: false
+
+- id: "ISG-HOST-004"
+  title: "Dangerous ambient capability granted"
+  severity: "CRITICAL"
+  category: "security"
+  description: "The unit grants an AmbientCapability commonly usable to escape confinement or take over the host (SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, SYS_MODULE, SYS_BOOT, DAC_READ_SEARCH, MAC_ADMIN, MAC_OVERRIDE)."
+  remediation: "Remove the AmbientCapabilities entry; grant only the specific capability the service actually requires."
+  provider: "host"
+  any_of:
+    - field: "resource.security.capabilities_add"
+      contains: "SYS_ADMIN"
+    - field: "resource.security.capabilities_add"
+      contains: "NET_ADMIN"
+    - field: "resource.security.capabilities_add"
+      contains: "NET_RAW"
+    - field: "resource.security.capabilities_add"
+      contains: "SYS_PTRACE"
+    - field: "resource.security.capabilities_add"
+      contains: "SYS_MODULE"
+    - field: "resource.security.capabilities_add"
+      contains: "SYS_BOOT"
+    - field: "resource.security.capabilities_add"
+      contains: "DAC_READ_SEARCH"
+    - field: "resource.security.capabilities_add"
+      contains: "MAC_ADMIN"
+    - field: "resource.security.capabilities_add"
+      contains: "MAC_OVERRIDE"
+
+- id: "ISG-HOST-005"
+  title: "Dangerous capability still in bounding set"
+  severity: "HIGH"
+  category: "security"
+  description: "CapabilityBoundingSet still includes CAP_SYS_ADMIN, so a compromised service process could use it if it manages to acquire the capability by any other means (e.g. a setuid helper)."
+  remediation: "Set CapabilityBoundingSet= to an explicit allow-list that excludes CAP_SYS_ADMIN unless genuinely required."
+  provider: "host"
+  condition:
+    field: "systemd.capability_bounding_set"
+    contains: "SYS_ADMIN"
+
+- id: "ISG-HOST-006"
+  title: "PrivateTmp not enabled"
+  severity: "LOW"
+  category: "security"
+  description: "The unit does not set PrivateTmp=yes, so it shares /tmp and /var/tmp with every other process on the host."
+  remediation: "Set PrivateTmp=yes unless the service specifically needs to share temp files with another process."
+  provider: "host"
+  condition:
+    field: "systemd.private_tmp"
+    equals: false
+
+- id: "ISG-HOST-007"
+  title: "Home directories not protected"
+  severity: "LOW"
+  category: "security"
+  description: "ProtectHome is not set, so the service can read (and, depending on configuration, write) every user's home directory."
+  remediation: "Set ProtectHome=yes (or read-only/tmpfs) unless the service specifically needs home-directory access."
+  provider: "host"
+  any_of:
+    - field: "systemd.protect_home"
+      equals: "no"
+    - field: "systemd.protect_home"
+      equals: ""
+
+- id: "ISG-HOST-008"
+  title: "Namespaces not restricted"
+  severity: "MEDIUM"
+  category: "security"
+  description: "RestrictNamespaces is not enabled, so the service can create new namespaces (e.g. via unshare/clone) beyond what it needs."
+  remediation: "Set RestrictNamespaces=yes, or an explicit allow-list of the specific namespace types the service needs."
+  provider: "host"
+  condition:
+    field: "systemd.restrict_namespaces"
+    equals: "no"
+
+- id: "ISG-HOST-009"
+  title: "MemoryDenyWriteExecute not set"
+  severity: "MEDIUM"
+  category: "security"
+  description: "The unit does not set MemoryDenyWriteExecute=yes, making common memory-corruption exploit techniques (writing then executing shellcode) easier."
+  remediation: "Set MemoryDenyWriteExecute=yes unless the service specifically requires a JIT compiler or similar runtime code generation."
+  provider: "host"
+  condition:
+    field: "systemd.memory_deny_write_execute"
+    equals: false
+
+- id: "ISG-HOST-010"
+  title: "Service in a failed state"
+  severity: "LOW"
+  category: "operational"
+  description: "The unit's ActiveState is failed, which may indicate a crash, misconfiguration, or a dependency that is no longer available."
+  remediation: "Check `systemctl status <unit>` and the unit's journal (`journalctl -u <unit>`) to diagnose the failure."
+  provider: "host"
+  condition:
+    field: "systemd.active_state"
+    equals: "failed"
+
+- id: "ISG-HOST-011"
+  title: "Unmanaged process listening on a network port"
+  severity: "MEDIUM"
+  category: "governance"
+  description: "A process not managed by any systemd unit is listening on a network port — it isn't covered by any of the hardening checks above and won't restart under systemd's supervision if it crashes."
+  remediation: "Wrap the process in a systemd unit (with appropriate hardening directives) or confirm it's an intentional, supervised exception."
+  provider: "host"
+  condition:
+    field: "resource.kind"
+    equals: "process"
