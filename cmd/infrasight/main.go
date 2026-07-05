@@ -10,6 +10,7 @@ import (
 
 	// register providers by importing them
 	_ "github.com/cloudkops/infrasight/providers/docker"
+	_ "github.com/cloudkops/infrasight/providers/host"
 	_ "github.com/cloudkops/infrasight/providers/kubernetes"
 )
 

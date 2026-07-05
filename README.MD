@@ -56,6 +56,12 @@ infrasight scan kubernetes -A --ruleset rulesets/strict-runtime
 infrasight scan kubernetes -A -l app=payments --ruleset rulesets/strict-runtime \
   --format json --output findings.json --fail-on HIGH
 
+# Scan Docker containers/images/volumes/networks on this machine
+infrasight scan docker --ruleset rulesets/docker-baseline
+
+# Scan systemd units and listening processes on this machine (run as root for complete results)
+sudo infrasight scan host --ruleset rulesets/host-baseline
+
 # List registered providers
 infrasight providers list
 
@@ -90,15 +96,17 @@ Exit code is severity-ranked: 0 (nothing at/above `--fail-on`), or a code reflec
 |---|---|---|
 | `kubernetes` | Implemented | Live |
 | `docker` | Implemented | Live |
+| `host` | Implemented | Live |
 | `terraform` | Scaffolded, not implemented | Static |
 | `ansible` | Scaffolded, not implemented | Static |
-| `host` | Scaffolded, not implemented | Live |
 
 The Kubernetes provider discovers Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, ConfigMaps, Secrets, Ingresses, NetworkPolicies, ClusterRoleBindings, and RoleBindings, fetched concurrently. Per-container attributes include user/privileged/capabilities, resource limits, probes, image, and secret-sourced env vars; per-resource attributes include host namespace usage (`hostNetwork`/`hostPID`/`hostIPC`), hostPath volumes, service account token automount, and (for RBAC bindings) whether they bind the `cluster-admin` ClusterRole.
 
 RBAC findings are reported as standalone `clusterrolebinding`/`rolebinding` resources — there is no Pod → ServiceAccount → Binding resolution yet, so a finding tells you *a binding grants cluster-admin*, not *which running pods can use it*.
 
 The Docker provider discovers containers, images, volumes, and networks via the Docker Engine API (`DOCKER_HOST` or `--docker-host`). A container maps to a Resource wrapping exactly one nested Container — deliberately mirroring the Kubernetes Pod/Container split — so `container.*`/`container.security.*` rule fields resolve the same way for both providers. Per-container attributes include privileged/capabilities/read-only-rootfs, docker-socket mounts, and security options; resource-level attributes cover host PID/IPC namespace sharing and `--network=host`; Compose-labeled containers report their compose-service as `Owner`. See `docs/docker.md` for the full field/attribute reference.
+
+The Host provider scans only the local Linux machine InfraSight is running on (no remote/SSH fan-out) via `/proc` and `systemctl`. It discovers systemd `.service` units (root/privilege-escalation/capability/namespace hardening flags under `resource.security.*` and `systemd.*`) plus any process listening on a TCP port that isn't attributable to a systemd unit (reported standalone as `Kind: "process"`, so nothing exposed is silently dropped). Unlike Docker/Kubernetes, host resources have no nested-container concept at all — `Security` lives directly on the Resource. Full results require running as root (socket-ownership correlation needs access to other users' `/proc/<pid>/fd`). See `docs/host.md`.
 
 ## Rules and rulesets
 
@@ -143,10 +151,12 @@ any_of:               # ANY must match
 
 | Ruleset | Rules | Purpose |
 |---|---|---|
-| `security-baseline` | 11 | General security/governance/resource baseline |
-| `dev-baseline` | 6 | Lower-severity guardrails for dev clusters |
-| `strict-runtime` | 19 | Hardened production controls (root, privileged, host namespaces, image tags, probes, capabilities, hostPath, secret env vars, cluster-admin bindings, ...) |
-| `ci-critical` | 2 | CRITICAL-only gate for CI pipelines |
+| `security-baseline` | 11 | General security/governance/resource baseline (Kubernetes) |
+| `dev-baseline` | 6 | Lower-severity guardrails for dev clusters (Kubernetes) |
+| `strict-runtime` | 19 | Hardened production controls (root, privileged, host namespaces, image tags, probes, capabilities, hostPath, secret env vars, cluster-admin bindings, ...) (Kubernetes) |
+| `ci-critical` | 2 | CRITICAL-only gate for CI pipelines (Kubernetes) |
+| `docker-baseline` | 25 | Container/image/network/volume security and governance checks (Docker) |
+| `host-baseline` | 11 | systemd-unit hardening flags and unmanaged listening processes (Host) |
 
 Point `--ruleset` at any directory of rule YAML files to build your own.
 
@@ -182,10 +192,10 @@ internal/rule/engine/   resource × container × rule evaluation
 internal/report/        Finding type, renderer registry, exit codes
 internal/report/{json,sarif,table,markdown}/  output renderers
 internal/scan/orchestrator/  ties provider discovery + rule loading + evaluation together
-providers/kubernetes/   the only implemented provider
-providers/{docker,terraform,ansible,host}/  scaffolding for future providers
+providers/{kubernetes,docker,host}/  implemented providers
+providers/{terraform,ansible}/  scaffolding for future providers
 rulesets/               bundled rule YAML profiles
-docs/                   architecture, Kubernetes provider, and rulesets manuals
+docs/                   architecture, per-provider, and rulesets manuals
 ```
 
-See `docs/high_level_architecture.md`, `docs/k8s.md`, `docs/docker.md`, and `docs/rulesets_manual.md` for deeper detail on each layer.
+See `docs/high_level_architecture.md`, `docs/k8s.md`, `docs/docker.md`, `docs/host.md`, and `docs/rulesets_manual.md` for deeper detail on each layer.

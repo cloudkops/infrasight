@@ -65,6 +65,19 @@ func TestLoadRuleset_DockerBaseline(t *testing.T) {
 	}
 }
 
+func TestLoadRuleset_HostBaseline(t *testing.T) {
+	rules, err := LoadRuleset("../../../rulesets/host-baseline", "host")
+	if err != nil {
+		t.Fatalf("LoadRuleset: %v", err)
+	}
+	if len(rules) != 11 {
+		t.Fatalf("expected 11 rules, got %d", len(rules))
+	}
+	if err := ValidateRules(rules); err != nil {
+		t.Fatalf("ValidateRules: %v", err)
+	}
+}
+
 func TestLoad_MissingFile(t *testing.T) {
 	if _, err := Load("does-not-exist.yaml"); err == nil {
 		t.Fatal("expected an error for a missing file")
