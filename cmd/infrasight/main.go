@@ -8,6 +8,8 @@ import (
 	_ "github.com/cloudkops/infrasight/internal/report/sarif"
 	_ "github.com/cloudkops/infrasight/internal/report/table"
 
+	// register providers by importing them
+	_ "github.com/cloudkops/infrasight/providers/docker"
 	_ "github.com/cloudkops/infrasight/providers/kubernetes"
 )
 
