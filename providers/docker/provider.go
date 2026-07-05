@@ -21,7 +21,7 @@ func (p *Provider) Kind() provider.Kind {
 }
 
 func (p *Provider) Discover(ctx context.Context, opts provider.Options) ([]resource.Resource, error) {
-	client, err := newClient()
+	client, err := newClient(opts.DockerHost)
 	if err != nil {
 		return nil, fmt.Errorf("docker: client: %w", err)
 	}
@@ -30,7 +30,6 @@ func (p *Provider) Discover(ctx context.Context, opts provider.Options) ([]resou
 	if err != nil {
 		return nil, err
 	}
-	// NormalizeAll is not implemented yet for Docker, so we return nil for now.
 	return NormalizeAll(raw), nil
 }
 

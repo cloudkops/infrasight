@@ -29,38 +29,132 @@ func NormalizeAll(raw *rawObjects) []resource.Resource {
 	return resources
 }
 
+// mapContainer mirrors providers/kubernetes's mapPod: the container's own
+// security/attributes live on a nested resource.Container (so container.security.*
+// and container.* rule fields resolve exactly like they do for Kubernetes), while
+// the top-level Resource carries only the resource-wide rollup (aggregateSecurity),
+// host-namespace sharing, and networking — a standalone Docker container has no
+// separate "pod" wrapper, so the Resource IS the one container it wraps.
 func mapContainer(c *container.InspectResponse) resource.Resource {
+	name := strings.TrimPrefix(c.Name, "/")
 	sec := mapContainerSecurity(c)
-	exposures := mapContainerExposures(c)
-	attrs := mapContainerAttributes(c)
-	owner := mapOwner(c)
+
+	nested := resource.Container{
+		Name:       name,
+		Image:      containerConfig(c).Image,
+		User:       parseUID(containerConfig(c).User),
+		Privileged: sec.Privileged,
+		Security:   sec,
+		Attributes: mapContainerAttributes(c),
+	}
 
 	return resource.Resource{
-		ID:       c.ID[:12],
-		Name:     strings.TrimPrefix(c.Name, "/"),
+		ID:       shortID(c.ID),
+		Name:     name,
 		Kind:     "container",
 		Provider: Name,
 		Metadata: resource.Metadata{
-			Labels: c.Config.Labels,
+			Labels: containerConfig(c).Labels,
 		},
-		Security:   sec,
-		Networking: resource.Networking{Exposures: exposures},
-		Runtime:    resource.Runtime{},
-		Owner:      owner,
-		Attributes: attrs,
+		Security:   aggregateSecurity([]resource.Container{nested}),
+		Networking: resource.Networking{Exposures: mapContainerExposures(c)},
+		Runtime:    resource.Runtime{Containers: []resource.Container{nested}},
+		Owner:      mapOwner(c),
+		Attributes: containerHostAttributes(c),
 	}
+}
+
+// aggregateSecurity gives resource-level rules (resource.security.*) a
+// conservative cross-container view: privileged/root if any container is. Kept
+// identical in shape to providers/kubernetes's helper of the same name even though
+// Docker only ever passes a single-element slice today, so a future
+// multi-container grouping (e.g. one Resource per Compose stack) is a non-breaking
+// change.
+func aggregateSecurity(containers []resource.Container) resource.SecurityContext {
+	var sec resource.SecurityContext
+	for _, c := range containers {
+		if c.Security.Privileged {
+			sec.Privileged = true
+		}
+		if c.Security.RunAsRoot {
+			sec.RunAsRoot = true
+		}
+	}
+	return sec
+}
+
+// parseUID extracts a numeric UID from a Docker --user value ("", "root", "1000",
+// or "1000:1000"). An unparseable non-numeric user (e.g. "appuser") returns 0, same
+// as root — no docker-baseline rule reads this typed field today (root detection
+// goes through mapContainerSecurity's string-based check instead), so the
+// ambiguity is harmless; this only fills in resource.Container.User for parity
+// with the Kubernetes provider's typed field.
+func parseUID(user string) int64 {
+	if user == "" || user == "root" {
+		return 0
+	}
+	part, _, _ := strings.Cut(user, ":")
+	if part == "root" {
+		return 0
+	}
+	uid, err := strconv.ParseInt(part, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return uid
+}
+
+// containerHostAttributes mirrors providers/kubernetes's podLevelAttributes:
+// host-namespace sharing (--pid=host/--ipc=host) is a resource-wide signal, not a
+// per-container one, exactly like Kubernetes' pod-level hostPID/hostIPC.
+func containerHostAttributes(c *container.InspectResponse) map[string]any {
+	hostCfg := containerHostConfig(c)
+	return map[string]any{
+		"resource.host_pid": hostCfg.PidMode == "host",
+		"resource.host_ipc": hostCfg.IpcMode == "host",
+	}
+}
+
+// containerConfig and containerHostConfig guard against a nil Config/HostConfig on
+// InspectResponse — normally always populated by a successful inspect, but nothing
+// in the client guarantees it, and every accessor in this file assumes non-nil.
+func containerConfig(c *container.InspectResponse) *container.Config {
+	if c.Config != nil {
+		return c.Config
+	}
+	return &container.Config{}
+}
+
+func containerHostConfig(c *container.InspectResponse) *container.HostConfig {
+	if c.HostConfig != nil {
+		return c.HostConfig
+	}
+	return &container.HostConfig{}
+}
+
+// shortID truncates a Docker object ID to its conventional 12-character short
+// form, without panicking if the API ever returns something shorter.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func mapImage(img *image.InspectResponse) resource.Resource {
 	attrs := mapImageAttributes(img)
+	var labels map[string]string
+	if img.Config != nil {
+		labels = img.Config.Labels
+	}
 
 	return resource.Resource{
-		ID:       img.ID[:12],
+		ID:       shortID(img.ID),
 		Name:     imageName(img),
 		Kind:     "image",
 		Provider: Name,
 		Metadata: resource.Metadata{
-			Labels: img.Config.Labels,
+			Labels: labels,
 		},
 		Attributes: attrs,
 	}
@@ -101,7 +195,7 @@ func mapNetwork(net *network.Inspect) resource.Resource {
 	}
 
 	return resource.Resource{
-		ID:         net.ID[:12],
+		ID:         shortID(net.ID),
 		Name:       net.Name,
 		Kind:       "network",
 		Provider:   Name,
@@ -111,10 +205,13 @@ func mapNetwork(net *network.Inspect) resource.Resource {
 }
 
 func mapContainerSecurity(c *container.InspectResponse) resource.SecurityContext {
+	cfg := containerConfig(c)
+	hostCfg := containerHostConfig(c)
+
 	runAsRoot := false
-	if c.Config.User == "" || c.Config.User == "0" || c.Config.User == "root" {
+	if cfg.User == "" || cfg.User == "0" || cfg.User == "root" {
 		runAsRoot = true
-	} else if parts := strings.SplitN(c.Config.User, ":", 2); len(parts) > 0 {
+	} else if parts := strings.SplitN(cfg.User, ":", 2); len(parts) > 0 {
 		if uid, err := strconv.ParseInt(parts[0], 10, 64); err == nil && uid == 0 {
 			runAsRoot = true
 		} else if parts[0] == "root" {
@@ -122,26 +219,28 @@ func mapContainerSecurity(c *container.InspectResponse) resource.SecurityContext
 		}
 	}
 
+	readOnlyRootFS := hostCfg.ReadonlyRootfs
 	return resource.SecurityContext{
 		RunAsRoot:                runAsRoot,
-		Privileged:               c.HostConfig.Privileged,
+		Privileged:               hostCfg.Privileged,
 		AllowPrivilegeEscalation: nil,
-		ReadOnlyRootFilesystem:   &c.HostConfig.ReadonlyRootfs,
-		CapabilitiesAdd:          c.HostConfig.CapAdd,
-		CapabilitiesDrop:         c.HostConfig.CapDrop,
+		ReadOnlyRootFilesystem:   &readOnlyRootFS,
+		CapabilitiesAdd:          hostCfg.CapAdd,
+		CapabilitiesDrop:         hostCfg.CapDrop,
 		Public:                   false,
 		Encrypted:                nil,
 	}
 }
 
 func mapContainerExposures(c *container.InspectResponse) []resource.Exposure {
+	hostCfg := containerHostConfig(c)
 	var exposures []resource.Exposure
 
-	if c.HostConfig.NetworkMode == "host" {
+	if hostCfg.NetworkMode == "host" {
 		exposures = append(exposures, resource.Exposure{Type: "hostNetwork"})
 	}
 
-	for _, bindings := range c.HostConfig.PortBindings {
+	for _, bindings := range hostCfg.PortBindings {
 		for _, b := range bindings {
 			hostPort, _ := strconv.ParseInt(b.HostPort, 10, 32)
 			exposures = append(exposures, resource.Exposure{
@@ -155,8 +254,9 @@ func mapContainerExposures(c *container.InspectResponse) []resource.Exposure {
 }
 
 func mapOwner(c *container.InspectResponse) *resource.Owner {
-	if composeService, ok := c.Config.Labels["com.docker.compose.service"]; ok {
-		project := c.Config.Labels["com.docker.compose.project"]
+	labels := containerConfig(c).Labels
+	if composeService, ok := labels["com.docker.compose.service"]; ok {
+		project := labels["com.docker.compose.project"]
 		return &resource.Owner{
 			Kind: "compose-service",
 			Name: fmt.Sprintf("%s/%s", project, composeService),
@@ -165,20 +265,27 @@ func mapOwner(c *container.InspectResponse) *resource.Owner {
 	return nil
 }
 
+// mapContainerAttributes returns per-container attributes only. "container.image",
+// "container.user", and "container.privileged" are deliberately absent: they'd be
+// shadowed anyway by resolveField's typed fast path for those exact field names
+// (which reads Container.Image/User/Privileged directly and always wins over the
+// Attributes fallback), so setting them here would just be dead, misleading data —
+// same reasoning as providers/kubernetes's mapContainer. "container.cap_add" is
+// dropped too: SecurityContext.Flatten already exposes the same HostConfig.CapAdd
+// data as "container.security.capabilities_add".
 func mapContainerAttributes(c *container.InspectResponse) map[string]any {
+	cfg := containerConfig(c)
+	hostCfg := containerHostConfig(c)
+
 	attrs := map[string]any{
-		"container.image":    c.Config.Image,
 		"container.state":    c.State.Status,
 		"container.running":  c.State.Running,
 		"container.pid":      c.State.Pid,
 		"container.platform": c.Platform,
 	}
 
-	if c.Config.User != "" {
-		attrs["container.user"] = c.Config.User
-	}
-	if len(c.Config.Env) > 0 {
-		attrs["container.env_count"] = len(c.Config.Env)
+	if len(cfg.Env) > 0 {
+		attrs["container.env_count"] = len(cfg.Env)
 	}
 	if len(c.Mounts) > 0 {
 		attrs["container.mounts_count"] = len(c.Mounts)
@@ -191,20 +298,8 @@ func mapContainerAttributes(c *container.InspectResponse) map[string]any {
 		}
 		attrs["container.docker_sock_mount"] = dockerSock
 	}
-	if c.HostConfig.Privileged {
-		attrs["container.privileged"] = true
-	}
-	if len(c.HostConfig.CapAdd) > 0 {
-		attrs["container.cap_add"] = c.HostConfig.CapAdd
-	}
-	if len(c.HostConfig.SecurityOpt) > 0 {
-		attrs["container.security_opt"] = c.HostConfig.SecurityOpt
-	}
-	if c.HostConfig.PidMode == "host" {
-		attrs["container.host_pid"] = true
-	}
-	if c.HostConfig.IpcMode == "host" {
-		attrs["container.host_ipc"] = true
+	if len(hostCfg.SecurityOpt) > 0 {
+		attrs["container.security_opt"] = hostCfg.SecurityOpt
 	}
 
 	return attrs
@@ -212,7 +307,7 @@ func mapContainerAttributes(c *container.InspectResponse) map[string]any {
 
 func mapImageAttributes(img *image.InspectResponse) map[string]any {
 	attrs := map[string]any{
-		"image.id":           img.ID[:12],
+		"image.id":           shortID(img.ID),
 		"image.os":           img.Os,
 		"image.architecture": img.Architecture,
 		"image.size":         img.Size,
@@ -273,5 +368,5 @@ func imageName(img *image.InspectResponse) string {
 			return parts[0]
 		}
 	}
-	return img.ID[:12]
+	return shortID(img.ID)
 }

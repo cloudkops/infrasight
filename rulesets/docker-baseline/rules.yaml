@@ -53,7 +53,7 @@
   remediation: "Remove --pid=host unless the workload specifically requires host-level process visibility."
   provider: "docker"
   condition:
-    field: "container.host_pid"
+    field: "resource.host_pid"
     equals: true
 
 - id: "ISG-DOC-006"
@@ -64,7 +64,7 @@
   remediation: "Remove --ipc=host unless the workload specifically requires it."
   provider: "docker"
   condition:
-    field: "container.host_ipc"
+    field: "resource.host_ipc"
     equals: true
 
 - id: "ISG-DOC-007"
@@ -104,7 +104,7 @@
   remediation: "Run with --read-only and use tmpfs for writable paths the application needs."
   provider: "docker"
   condition:
-    field: "resource.security.read_only_root_filesystem"
+    field: "container.security.read_only_root_filesystem"
     equals: false
 
 - id: "ISG-DOC-009"
@@ -115,7 +115,7 @@
   remediation: "Add --cap-drop=ALL and add back only the specific capabilities needed."
   provider: "docker"
   condition:
-    field: "resource.security.capabilities_drop"
+    field: "container.security.capabilities_drop"
     exists: false
 
 - id: "ISG-DOC-010"

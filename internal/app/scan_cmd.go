@@ -27,6 +27,7 @@ type scanFlags struct {
 	fieldSelector string
 	kubeconfig    string
 	kubeContext   string
+	dockerHost    string
 }
 
 // newScanCmd builds one subcommand per registered provider — "scan kubernetes",
@@ -72,4 +73,5 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().StringVar(&f.fieldSelector, "field-selector", "", "Field selector (Kubernetes)")
 	cmd.Flags().StringVar(&f.kubeconfig, "kubeconfig", "", "Path to kubeconfig file (Kubernetes)")
 	cmd.Flags().StringVar(&f.kubeContext, "context", "", "Kubeconfig context to use (Kubernetes)")
+	cmd.Flags().StringVar(&f.dockerHost, "docker-host", "", "Docker daemon socket/host (empty = DOCKER_HOST env or default socket; Docker)")
 }

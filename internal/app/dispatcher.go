@@ -30,6 +30,7 @@ func dispatch(cmd *cobra.Command, providerName string, f *scanFlags) int {
 			Verbose:       f.verbose,
 			Kubeconfig:    f.kubeconfig,
 			Context:       f.kubeContext,
+			DockerHost:    f.dockerHost,
 		},
 	}
 
