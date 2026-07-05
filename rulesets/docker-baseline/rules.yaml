@@ -1,0 +1,307 @@
+# Docker container security baseline — flags common misconfigurations and risky
+# patterns in standalone Docker containers and Compose stacks.
+
+- id: "ISG-DOC-001"
+  title: "Container running as root"
+  severity: "HIGH"
+  category: "security"
+  description: "Container runs as root (UID 0), which is the default if no user is specified."
+  remediation: "Set --user or USER directive to a non-root UID."
+  provider: "docker"
+  condition:
+    field: "resource.security.run_as_root"
+    equals: true
+
+- id: "ISG-DOC-002"
+  title: "Privileged container"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container runs with --privileged, granting near-host-root access."
+  remediation: "Remove --privileged; grant only the specific Linux capabilities the workload needs."
+  provider: "docker"
+  condition:
+    field: "resource.security.privileged"
+    equals: true
+
+- id: "ISG-DOC-003"
+  title: "Docker socket mounted"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container mounts the Docker socket (/var/run/docker.sock), giving it full control over the Docker daemon — effectively root on the host."
+  remediation: "Remove the docker.sock volume mount; use a dedicated API proxy or Docker-in-Docker if Docker access is required."
+  provider: "docker"
+  condition:
+    field: "container.docker_sock_mount"
+    equals: true
+
+- id: "ISG-DOC-004"
+  title: "Host network mode"
+  severity: "HIGH"
+  category: "security"
+  description: "Container uses --network=host, sharing the host's network namespace."
+  remediation: "Use bridge or overlay networking; expose only necessary ports."
+  provider: "docker"
+  condition:
+    field: "networking.hostNetwork"
+    equals: true
+
+- id: "ISG-DOC-005"
+  title: "Host PID namespace"
+  severity: "HIGH"
+  category: "security"
+  description: "Container uses --pid=host, giving it visibility into every process on the host."
+  remediation: "Remove --pid=host unless the workload specifically requires host-level process visibility."
+  provider: "docker"
+  condition:
+    field: "container.host_pid"
+    equals: true
+
+- id: "ISG-DOC-006"
+  title: "Host IPC namespace"
+  severity: "HIGH"
+  category: "security"
+  description: "Container uses --ipc=host, sharing the host's inter-process communication namespace."
+  remediation: "Remove --ipc=host unless the workload specifically requires it."
+  provider: "docker"
+  condition:
+    field: "container.host_ipc"
+    equals: true
+
+- id: "ISG-DOC-007"
+  title: "Dangerous Linux capability added"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Container adds a Linux capability commonly usable to escape container isolation or take over the host (SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, SYS_MODULE, SYS_BOOT, DAC_READ_SEARCH, MAC_ADMIN, MAC_OVERRIDE, ALL)."
+  remediation: "Drop the capability; grant only what the workload specifically requires."
+  provider: "docker"
+  any_of:
+    - field: "container.security.capabilities_add"
+      contains: "ALL"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "NET_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "NET_RAW"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_PTRACE"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_MODULE"
+    - field: "container.security.capabilities_add"
+      contains: "SYS_BOOT"
+    - field: "container.security.capabilities_add"
+      contains: "DAC_READ_SEARCH"
+    - field: "container.security.capabilities_add"
+      contains: "MAC_ADMIN"
+    - field: "container.security.capabilities_add"
+      contains: "MAC_OVERRIDE"
+
+- id: "ISG-DOC-008"
+  title: "Read-only root filesystem not enforced"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container does not use --read-only, allowing runtime tampering with its own filesystem."
+  remediation: "Run with --read-only and use tmpfs for writable paths the application needs."
+  provider: "docker"
+  condition:
+    field: "resource.security.read_only_root_filesystem"
+    equals: false
+
+- id: "ISG-DOC-009"
+  title: "No capability dropped"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container does not drop any Linux capabilities, retaining all default capabilities."
+  remediation: "Add --cap-drop=ALL and add back only the specific capabilities needed."
+  provider: "docker"
+  condition:
+    field: "resource.security.capabilities_drop"
+    exists: false
+
+- id: "ISG-DOC-010"
+  title: "Container not running"
+  severity: "LOW"
+  category: "operational"
+  description: "Container is not in running state, which may indicate a crash or misconfiguration."
+  remediation: "Check container logs with docker logs to diagnose the failure."
+  provider: "docker"
+  condition:
+    field: "container.running"
+    equals: false
+
+- id: "ISG-DOC-011"
+  title: "Missing team label"
+  severity: "LOW"
+  category: "governance"
+  description: "Container has no 'team' label, making ownership hard to trace."
+  remediation: "Add a 'team' label identifying the owning team (docker label or compose label)."
+  provider: "docker"
+  condition:
+    field: "resource.labels.team"
+    exists: false
+
+- id: "ISG-DOC-012"
+  title: "Missing environment label"
+  severity: "LOW"
+  category: "governance"
+  description: "Container has no 'env' label, making environment identification hard."
+  remediation: "Add an 'env' label (e.g. prod, staging, dev)."
+  provider: "docker"
+  condition:
+    field: "resource.labels.env"
+    exists: false
+
+- id: "ISG-DOC-013"
+  title: "Unpinned or floating image tag"
+  severity: "HIGH"
+  category: "security"
+  description: "Container image resolves to :latest (explicitly or by omitting a tag entirely), so the exact code running is not reproducible."
+  remediation: "Pin the image to an immutable tag or digest (e.g. app:1.4.2 or app@sha256:...)."
+  provider: "docker"
+  any_of:
+    - field: "container.image"
+      ends_with: ":latest"
+    - field: "container.image"
+      regex: "^[^:@]+$"
+
+- id: "ISG-DOC-014"
+  title: "Security options applied"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Container has custom security options set, which may override or relax default protections."
+  remediation: "Review --security-opt settings to ensure they do not weaken container isolation."
+  provider: "docker"
+  condition:
+    field: "container.security_opt"
+    exists: true
+
+# Image security rules
+
+- id: "ISG-DOC-015"
+  title: "Image runs as root"
+  severity: "HIGH"
+  category: "security"
+  description: "Image has no USER directive or sets USER to root, so containers will run as root by default."
+  remediation: "Add a USER directive in the Dockerfile to run as a non-root user."
+  provider: "docker"
+  condition:
+    field: "image.runs_as_root"
+    equals: true
+
+- id: "ISG-DOC-016"
+  title: "Image exposes ports"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Image declares EXPOSE directives, which may indicate unnecessary network exposure."
+  remediation: "Remove EXPOSE directives unless the port is required; use -p flag at runtime for explicit port mapping."
+  provider: "docker"
+  condition:
+    field: "image.exposed_ports"
+    exists: true
+
+- id: "ISG-DOC-017"
+  title: "Image declares docker.sock volume"
+  severity: "CRITICAL"
+  category: "security"
+  description: "Image declares a volume for /var/run/docker.sock, enabling container escape via Docker API."
+  remediation: "Remove the VOLUME directive for docker.sock from the Dockerfile."
+  provider: "docker"
+  condition:
+    field: "image.docker_sock_volume"
+    equals: true
+
+- id: "ISG-DOC-018"
+  title: "Unpinned image tag"
+  severity: "HIGH"
+  category: "security"
+  description: "Image uses :latest tag or has no tag, making builds non-reproducible."
+  remediation: "Pin the image to an immutable tag or digest (e.g. app:1.4.2 or app@sha256:...)."
+  provider: "docker"
+  any_of:
+    - field: "image.tags"
+      ends_with: ":latest"
+    - field: "image.tags"
+      regex: "^[^:@]+$"
+
+- id: "ISG-DOC-019"
+  title: "No entrypoint defined"
+  severity: "LOW"
+  category: "operational"
+  description: "Image has no ENTRYPOINT, relying on shell form or CMD for execution."
+  remediation: "Define an ENTRYPOINT in the Dockerfile for explicit process invocation."
+  provider: "docker"
+  condition:
+    field: "image.entrypoint"
+    exists: false
+
+- id: "ISG-DOC-020"
+  title: "Image declares volumes"
+  severity: "LOW"
+  category: "operational"
+  description: "Image declares VOLUME directives, which create anonymous volumes that may persist data unexpectedly."
+  remediation: "Remove VOLUME directives unless explicitly needed; mount volumes at runtime instead."
+  provider: "docker"
+  condition:
+    field: "image.volumes"
+    exists: true
+
+# Network rules
+
+- id: "ISG-DOC-021"
+  title: "Internal network exposed"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Network is not internal, allowing containers to reach external networks."
+  remediation: "Use internal networks for inter-container communication that should not reach the internet."
+  provider: "docker"
+  any_of:
+    - field: "network.internal"
+      equals: false
+    - field: "network.internal"
+      exists: false
+
+- id: "ISG-DOC-022"
+  title: "Attachable network"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Network is attachable, allowing standalone containers to connect outside of swarm services."
+  remediation: "Remove attachable option unless specifically needed for non-swarm containers."
+  provider: "docker"
+  condition:
+    field: "network.attachable"
+    equals: true
+
+- id: "ISG-DOC-023"
+  title: "Ingress network"
+  severity: "MEDIUM"
+  category: "security"
+  description: "Network is an ingress network, providing routing mesh for swarm services."
+  remediation: "Review ingress network configuration to ensure it is necessary."
+  provider: "docker"
+  condition:
+    field: "network.ingress"
+    equals: true
+
+# Volume rules
+
+- id: "ISG-DOC-024"
+  title: "Local volume driver"
+  severity: "LOW"
+  category: "operational"
+  description: "Volume uses the local driver, which may not support replication or backup."
+  remediation: "Consider using a volume driver that supports replication for production data."
+  provider: "docker"
+  condition:
+    field: "volume.driver"
+    equals: "local"
+
+- id: "ISG-DOC-025"
+  title: "Volume has no label"
+  severity: "LOW"
+  category: "governance"
+  description: "Volume has no labels, making ownership and environment identification difficult."
+  remediation: "Add labels to volumes for better organization and tracking."
+  provider: "docker"
+  condition:
+    field: "resource.labels"
+    exists: false
