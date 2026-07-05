@@ -80,6 +80,7 @@ infrasight version
 | `--field-selector` | | `""` | Field selector (Kubernetes) |
 | `--kubeconfig` | | `""` | Path to kubeconfig | 
 | `--context` | | `""` | Kubeconfig context to use |
+| `--docker-host` | | `""` | Docker daemon socket/host (empty = `DOCKER_HOST` env or default socket; Docker) |
 
 Exit code is severity-ranked: 0 (nothing at/above `--fail-on`), or a code reflecting the highest severity found — see `internal/report/exitcode.go`.
 
@@ -88,7 +89,7 @@ Exit code is severity-ranked: 0 (nothing at/above `--fail-on`), or a code reflec
 | Provider | Status | Kind |
 |---|---|---|
 | `kubernetes` | Implemented | Live |
-| `docker` | Scaffolded, not implemented | Live |
+| `docker` | Implemented | Live |
 | `terraform` | Scaffolded, not implemented | Static |
 | `ansible` | Scaffolded, not implemented | Static |
 | `host` | Scaffolded, not implemented | Live |
@@ -96,6 +97,8 @@ Exit code is severity-ranked: 0 (nothing at/above `--fail-on`), or a code reflec
 The Kubernetes provider discovers Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, ConfigMaps, Secrets, Ingresses, NetworkPolicies, ClusterRoleBindings, and RoleBindings, fetched concurrently. Per-container attributes include user/privileged/capabilities, resource limits, probes, image, and secret-sourced env vars; per-resource attributes include host namespace usage (`hostNetwork`/`hostPID`/`hostIPC`), hostPath volumes, service account token automount, and (for RBAC bindings) whether they bind the `cluster-admin` ClusterRole.
 
 RBAC findings are reported as standalone `clusterrolebinding`/`rolebinding` resources — there is no Pod → ServiceAccount → Binding resolution yet, so a finding tells you *a binding grants cluster-admin*, not *which running pods can use it*.
+
+The Docker provider discovers containers, images, volumes, and networks via the Docker Engine API (`DOCKER_HOST` or `--docker-host`). A container maps to a Resource wrapping exactly one nested Container — deliberately mirroring the Kubernetes Pod/Container split — so `container.*`/`container.security.*` rule fields resolve the same way for both providers. Per-container attributes include privileged/capabilities/read-only-rootfs, docker-socket mounts, and security options; resource-level attributes cover host PID/IPC namespace sharing and `--network=host`; Compose-labeled containers report their compose-service as `Owner`. See `docs/docker.md` for the full field/attribute reference.
 
 ## Rules and rulesets
 
@@ -185,4 +188,4 @@ rulesets/               bundled rule YAML profiles
 docs/                   architecture, Kubernetes provider, and rulesets manuals
 ```
 
-See `docs/high_level_architecture.md`, `docs/k8s.md`, and `docs/rulesets_manual.md` for deeper detail on each layer.
+See `docs/high_level_architecture.md`, `docs/k8s.md`, `docs/docker.md`, and `docs/rulesets_manual.md` for deeper detail on each layer.
